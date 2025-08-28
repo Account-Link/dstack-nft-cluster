@@ -16,8 +16,9 @@ import sys
 import os
 import json
 
-# Add current directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from signature_proof import SignatureProofGenerator
 from web3 import Web3

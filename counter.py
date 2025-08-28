@@ -20,11 +20,7 @@ from typing import Dict, Any, Optional
 from aiohttp import web
 import aiohttp
 
-try:
-    from dstack_sdk import DstackClient
-    DSTACK_AVAILABLE = True
-except ImportError:
-    DSTACK_AVAILABLE = False
+from dstack_sdk import DstackClient
 
 try:
     from web3 import Web3
@@ -98,39 +94,39 @@ class DistributedCounter:
         self.heartbeat_task = None
         
     def _init_dstack_wallet(self):
-        """Initialize wallet using dstack-sdk for key derivation"""
-        try:
-            logger.info(f"Initializing dstack wallet with path: {self.dstack_key_path}, purpose: {self.dstack_key_purpose}")
-            
-            # Create dstack client
-            if self.dstack_socket:
-                self.dstack_client = DstackClient(self.dstack_socket)
+        """Initialize wallet using dstack-sdk for instance-specific key derivation"""
+        # Create dstack client
+        if self.dstack_socket:
+            self.dstack_client = DstackClient(self.dstack_socket)
+        else:
+            # Try to auto-detect socket
+            if os.path.exists('./simulator/dstack.sock'):
+                self.dstack_client = DstackClient('./simulator/dstack.sock')
             else:
-                # Try to auto-detect socket
-                if os.path.exists('./simulator/dstack.sock'):
-                    self.dstack_client = DstackClient('./simulator/dstack.sock')
-                else:
-                    raise ValueError("No dstack socket specified and ./simulator/dstack.sock not found")
-            
-            # Test connection
-            info = self.dstack_client.info()
-            logger.info(f"Connected to dstack: {info.app_name} (ID: {info.app_id})")
-            
-            # Derive key
-            key_response = self.dstack_client.get_key(self.dstack_key_path, self.dstack_key_purpose)
-            private_key_bytes = key_response.decode_key()
-            
-            # Convert to eth_account
-            from dstack_sdk.ethereum import to_account_secure
-            self.account = to_account_secure(key_response)
-            self.wallet_address = self.account.address
-            
-            logger.info(f"DStack wallet initialized: {self.wallet_address}")
-            logger.info(f"Key derived from path: {self.dstack_key_path}, purpose: {self.dstack_key_purpose}")
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize dstack wallet: {e}")
-            raise RuntimeError(f"DStack wallet initialization failed: {e}")
+                raise ValueError("No dstack socket specified and ./simulator/dstack.sock not found")
+        
+        # Get instance information
+        info = self.dstack_client.info()
+        logger.info(f"Connected to dstack: {info.app_name} (ID: {info.app_id})")
+        logger.info(f"Instance ID: {info.instance_id}")
+        
+        # Use instance-specific key derivation for truly unique keys per instance
+        instance_key_path = f"instance/{info.instance_id}"
+        logger.info(f"Using instance-specific key path: {instance_key_path}")
+        
+        # Derive instance-specific key 
+        key_response = self.dstack_client.get_key(instance_key_path, self.dstack_key_purpose)
+        private_key_bytes = key_response.decode_key()
+        
+        # Convert to eth_account
+        from dstack_sdk.ethereum import to_account_secure
+        self.account = to_account_secure(key_response)
+        self.wallet_address = self.account.address
+        self.instance_key_path = instance_key_path
+        
+        logger.info(f"DStack instance wallet initialized: {self.wallet_address}")
+        logger.info(f"Key derived from path: {instance_key_path}, purpose: {self.dstack_key_purpose}")
+        logger.info(f"This address is unique to this DStack instance and needs funding from NFT owner")
     
     def get_wallet_info(self):
         """Get wallet information for debugging"""
@@ -142,73 +138,78 @@ class DistributedCounter:
             'socket': self.dstack_socket or './simulator/dstack.sock'
         }
     
-    async def register_instance(self):
-        """Register instance using signature chain verification"""
-        logger.info("Registering instance with signature chain verification...")
+    async def register_instance(self, nft_owner_address=None):
+        """Prepare instance for registration by external NFT owner
+        
+        This method prepares the signature proof and outputs registration details
+        for the external NFT owner to use. The instance does not register itself.
+        
+        Args:
+            nft_owner_address: Address of NFT owner (external), if None will just generate proof
+        """
+        logger.info("Preparing instance for external registration...")
+        logger.info(f"Instance address: {self.wallet_address}")
+        logger.info(f"Instance unique key path: {self.instance_key_path}")
         
         try:
-            # Use signature proof generator
+            # Check if instance address has sufficient balance for transactions
+            balance = self.w3.eth.get_balance(self.wallet_address)
+            logger.info(f"Instance address balance: {self.w3.from_wei(balance, 'ether')} ETH")
+            
+            # Use signature proof generator with instance-specific path
             proof_generator = SignatureProofGenerator(self.dstack_socket)
             
-            # Get registration data
-            registration_data = proof_generator.get_registration_data(
-                self.contract,
-                self.wallet_address,
-                self.instance_id,
-                self.dstack_key_path,
+            # Generate signature proof using instance-specific key path
+            proof = proof_generator.generate_proof(
+                self.instance_id, 
+                self.instance_key_path, 
                 self.dstack_key_purpose
             )
             
-            # Store for later use
-            self.token_id = registration_data.token_id
-            self.instance_id_bytes32 = registration_data.instance_id_bytes32
+            # Convert instance_id to bytes32
+            import hashlib
+            instance_hash = hashlib.sha256(self.instance_id.encode()).digest()
+            instance_id_bytes32 = bytes(instance_hash)
             
-            # Call enhanced registration
-            tx = self.contract.functions.registerInstanceWithProof(
-                registration_data.instance_id_bytes32,
-                registration_data.token_id,
-                registration_data.derived_public_key,
-                registration_data.app_signature,
-                registration_data.kms_signature,
-                registration_data.purpose,
-                registration_data.app_id
-            ).build_transaction({
-                'from': self.wallet_address,
-                'gas': 500000,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address)
-            })
+            # Get app ID from dstack client
+            info = self.dstack_client.info()
+            app_id = info.app_id
+            app_id_bytes = bytes.fromhex(app_id[2:])  # Remove 0x prefix
+            app_id_bytes32 = app_id_bytes.ljust(32, b'\x00')  # Pad to 32 bytes
             
-            signed_tx = self.account.sign_transaction(tx)
+            # Store instance registration data
+            self.instance_id_bytes32 = instance_id_bytes32
+            self.registration_proof = proof
             
-            # Handle different Web3.py versions
-            if hasattr(signed_tx, 'rawTransaction'):
-                raw_tx = signed_tx.rawTransaction
-            elif hasattr(signed_tx, 'raw_transaction'):
-                raw_tx = signed_tx.raw_transaction
+            # Output registration info for external NFT owner
+            logger.info("\n" + "="*60)
+            logger.info("REGISTRATION INFO FOR NFT OWNER")
+            logger.info("="*60)
+            logger.info(f"Instance Address: {self.wallet_address}")
+            logger.info(f"  -> This address needs ETH funding for gas")
+            logger.info(f"Instance ID (bytes32): 0x{instance_id_bytes32.hex()}")
+            logger.info(f"Derived Public Key: 0x{proof.derived_public_key.hex()}")
+            logger.info(f"App Signature: 0x{proof.app_signature.hex()}")
+            logger.info(f"KMS Signature: 0x{proof.kms_signature.hex()}")
+            logger.info(f"Purpose: {proof.purpose}")
+            logger.info(f"App ID: 0x{app_id_bytes32.hex()}")
+            logger.info("="*60)
+            logger.info("NFT owner should:")
+            logger.info("1. Fund instance address with ETH")
+            logger.info("2. Call contract.registerInstanceWithProof() with above data")
+            logger.info("="*60 + "\n")
+            
+            # Check if we're funded for basic operations
+            if balance == 0:
+                logger.warning("Instance address needs funding before it can participate in consensus")
+                return {"ready": False, "needs_funding": True, "address": self.wallet_address}
             else:
-                raw_tx = signed_tx.rawTransaction if hasattr(signed_tx, 'rawTransaction') else signed_tx.raw_transaction
-            
-            tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
-            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-            
-            if receipt.status == 1:
-                logger.info(f"Instance registered with attestation proof: {tx_hash.hex()}")
-            else:
-                logger.error(f"Registration failed. Receipt: {receipt}")
-                logger.error(f"Gas used: {receipt.gasUsed}")
-                logger.error(f"Transaction status: {receipt.status}")
-                raise RuntimeError("Registration with proof failed")
-            
-            # Update cluster size
-            try:
-                self.contract.functions.updateClusterSize().call()
-                logger.info("Cluster size updated")
-            except Exception as e:
-                logger.warning(f"Failed to update cluster size: {e}")
+                logger.info("Instance has sufficient balance for operations")
+                return {"ready": True, "needs_funding": False, "address": self.wallet_address}
                 
         except Exception as e:
-            logger.error(f"Registration failed: {e}")
-            raise
+            logger.error(f"Instance preparation failed: {e}")
+            return {"ready": False, "error": str(e)}
     
     async def start(self):
         """Start the counter service"""
@@ -238,8 +239,15 @@ class DistributedCounter:
         
         logger.info(f"Counter service started on port {self.port}")
         
-        # Register this instance
-        await self.register_instance()
+        # Prepare instance for external registration
+        registration_result = await self.register_instance()
+        
+        if registration_result.get("needs_funding"):
+            logger.info(f"Instance waiting for NFT owner to fund address: {registration_result['address']}")
+        elif registration_result.get("ready"):
+            logger.info("Instance is funded and ready for consensus participation")
+        else:
+            logger.error("Instance preparation failed - check logs above")
         
         # Keep running
         try:
@@ -489,19 +497,11 @@ async def main():
     parser.add_argument('--port', type=int, default=8080, help='HTTP port')
     
     # DStack options
-    parser.add_argument('--use-dstack', action='store_true', help='Use dstack-sdk for key derivation')
     parser.add_argument('--dstack-socket', help='DStack socket path (default: ./simulator/dstack.sock)')
     parser.add_argument('--dstack-key-path', help='DStack key derivation path (default: node/{instance-id})')
     parser.add_argument('--dstack-key-purpose', help='DStack key purpose (default: ethereum)')
     
     args = parser.parse_args()
-    
-    # Validate arguments
-    if not args.use_dstack and not args.wallet:
-        parser.error("Either --use-dstack or --wallet must be specified")
-    
-    if args.use_dstack and not DSTACK_AVAILABLE:
-        parser.error("--use-dstack specified but dstack-sdk is not available")
     
     # Create and start counter service
     counter = DistributedCounter(
