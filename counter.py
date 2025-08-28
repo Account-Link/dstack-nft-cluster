@@ -43,15 +43,20 @@ class DistributedCounter:
     def __init__(self, instance_id: str, contract_address: str = None, 
                  rpc_url: str = "http://localhost:8545", 
                  port: int = 8080, dstack_socket: str = None,
-                 dstack_key_path: str = None, dstack_key_purpose: str = None):
+                 host_private_key: str = None):
         self.instance_id = instance_id
         self.port = port
         self.dstack_socket = dstack_socket
-        self.dstack_key_path = dstack_key_path or f"node/{instance_id}"
-        self.dstack_key_purpose = dstack_key_purpose or "ethereum"
         
-        # Initialize DStack wallet (required for signature chain verification)
-        self._init_dstack_wallet()
+        # Host key is mandatory for all blockchain transactions
+        if not host_private_key:
+            raise ValueError("host_private_key is required - app key is only for TEE attestation")
+        
+        self.host_account = Account.from_key(host_private_key)
+        self.host_address = self.host_account.address
+        
+        # Initialize DStack for app key (TEE authentication)
+        self._init_dstack_app_key()
         
         # Web3 setup
         if not contract_address:
@@ -70,18 +75,20 @@ class DistributedCounter:
         self.token_id = None
         self.instance_id_bytes32 = bytes32(0)
         
-        # Contract ABI (simplified for demo)
+        # Contract ABI (updated for new DstackMembershipNFT contract)
         self.contract_abi = [
             {"inputs": [], "name": "currentLeader", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"},
             {"inputs": [], "name": "totalActiveNodes", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
             {"inputs": [], "name": "requiredVotes", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
             {"inputs": [{"type": "address"}, {"type": "bool"}], "name": "castVote", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
             {"inputs": [], "name": "electLeader", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
-            {"inputs": [], "name": "getActiveInstances", "outputs": [{"type": "bytes32[]"}], "stateMutability": "view", "type": "function"},
-            {"inputs": [{"type": "bytes32"}, {"type": "uint256"}], "name": "registerInstance", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
-            {"inputs": [{"type": "bytes32"}, {"type": "uint256"}, {"type": "bytes"}, {"type": "bytes"}, {"type": "bytes"}, {"type": "string"}, {"type": "bytes32"}], "name": "registerInstanceWithProof", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+            {"inputs": [], "name": "getActiveInstances", "outputs": [{"type": "string[]"}], "stateMutability": "view", "type": "function"},
+            {"inputs": [{"type": "string"}], "name": "registerInstance", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+            {"inputs": [{"type": "string"}, {"type": "uint256"}, {"type": "bytes"}, {"type": "bytes"}, {"type": "bytes"}, {"type": "string"}, {"type": "bytes32"}], "name": "submitCounterAttestation", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
             {"inputs": [{"type": "address"}], "name": "walletToTokenId", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"},
-            {"inputs": [], "name": "updateClusterSize", "outputs": [], "stateMutability": "nonpayable", "type": "function"}
+            {"inputs": [{"type": "string"}], "name": "getInstanceInfo", "outputs": [{"type": "uint256", "name": "tokenId"}, {"type": "bool", "name": "active"}, {"type": "address", "name": "ownerAddr"}], "stateMutability": "view", "type": "function"},
+            {"inputs": [{"type": "string"}], "name": "deactivateInstance", "outputs": [], "stateMutability": "nonpayable", "type": "function"},
+            {"inputs": [], "name": "totalSupply", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"}
         ]
         
         self.contract = self.w3.eth.contract(address=contract_address, abi=self.contract_abi)
@@ -93,8 +100,8 @@ class DistributedCounter:
         self.leader_monitor_task = None
         self.heartbeat_task = None
         
-    def _init_dstack_wallet(self):
-        """Initialize wallet using dstack-sdk for instance-specific key derivation"""
+    def _init_dstack_app_key(self):
+        """Initialize DStack app key for TEE authentication"""
         # Create dstack client
         if self.dstack_socket:
             self.dstack_client = DstackClient(self.dstack_socket)
@@ -108,108 +115,159 @@ class DistributedCounter:
         # Get instance information
         info = self.dstack_client.info()
         logger.info(f"Connected to dstack: {info.app_name} (ID: {info.app_id})")
-        logger.info(f"Instance ID: {info.instance_id}")
+        logger.info(f"DStack Instance ID: {info.instance_id}")
         
-        # Use instance-specific key derivation for truly unique keys per instance
-        instance_key_path = f"instance/{info.instance_id}"
-        logger.info(f"Using instance-specific key path: {instance_key_path}")
+        # Get app key for TEE authentication (shared across all instances of this app)
+        app_key_response = self.dstack_client.get_key("app", "ethereum")
         
-        # Derive instance-specific key 
-        key_response = self.dstack_client.get_key(instance_key_path, self.dstack_key_purpose)
-        private_key_bytes = key_response.decode_key()
-        
-        # Convert to eth_account
+        # Convert to eth_account for signing
         from dstack_sdk.ethereum import to_account_secure
-        self.account = to_account_secure(key_response)
-        self.wallet_address = self.account.address
-        self.instance_key_path = instance_key_path
+        self.app_account = to_account_secure(app_key_response)
+        self.app_key_response = app_key_response
         
-        logger.info(f"DStack instance wallet initialized: {self.wallet_address}")
-        logger.info(f"Key derived from path: {instance_key_path}, purpose: {self.dstack_key_purpose}")
-        logger.info(f"This address is unique to this DStack instance and needs funding from NFT owner")
+        logger.info(f"DStack app key initialized for TEE authentication")
+        logger.info(f"App key address: {self.app_account.address}")
+        if self.host_address:
+            logger.info(f"Host key address: {self.host_address} (for transactions)")
+        else:
+            logger.info("No host key provided - using app key for transactions (not recommended)")
     
     def get_wallet_info(self):
         """Get wallet information for debugging"""
         return {
-            'type': 'dstack',
-            'address': self.wallet_address,
-            'key_path': self.dstack_key_path,
-            'key_purpose': self.dstack_key_purpose,
+            'host_key_address': self.host_address,
+            'instance_id': self.instance_id,
             'socket': self.dstack_socket or './simulator/dstack.sock'
         }
     
-    async def register_instance(self, nft_owner_address=None):
-        """Prepare instance for registration by external NFT owner
-        
-        This method prepares the signature proof and outputs registration details
-        for the external NFT owner to use. The instance does not register itself.
-        
-        Args:
-            nft_owner_address: Address of NFT owner (external), if None will just generate proof
-        """
-        logger.info("Preparing instance for external registration...")
-        logger.info(f"Instance address: {self.wallet_address}")
-        logger.info(f"Instance unique key path: {self.instance_key_path}")
-        
+    def sign_with_app_key(self, message: str) -> bytes:
+        """Sign a message with the TEE app key for authentication"""
+        message_hash = Account.from_key(self.app_key_response.decode_key()).sign_message(message.encode()).signature
+        return message_hash
+    
+    async def submit_counter_attestation(self, value: int):
+        """Submit counter value with TEE attestation signature"""
         try:
-            # Check if instance address has sufficient balance for transactions
-            balance = self.w3.eth.get_balance(self.wallet_address)
-            logger.info(f"Instance address balance: {self.w3.from_wei(balance, 'ether')} ETH")
+            # Create message to sign with app key
+            message = f"{self.instance_id}:{value}"
+            app_signature = self.sign_with_app_key(message)
             
-            # Use signature proof generator with instance-specific path
-            proof_generator = SignatureProofGenerator(self.dstack_socket)
+            # For now, we'll use a placeholder KMS signature
+            # In production, this would come from the KMS service
+            kms_signature = b'\x00' * 65  # Placeholder
             
-            # Generate signature proof using instance-specific key path
-            proof = proof_generator.generate_proof(
-                self.instance_id, 
-                self.instance_key_path, 
-                self.dstack_key_purpose
-            )
+            # Use host key for transaction (mandatory)
+            tx_account = self.host_account
             
-            # Convert instance_id to bytes32
-            import hashlib
-            instance_hash = hashlib.sha256(self.instance_id.encode()).digest()
-            instance_id_bytes32 = bytes(instance_hash)
+            # Build and send transaction
+            tx = self.contract.functions.submitCounterAttestation(
+                self.instance_id,
+                value,
+                app_signature,
+                kms_signature
+            ).build_transaction({
+                'from': tx_account.address,
+                'nonce': self.w3.eth.get_transaction_count(tx_account.address),
+                'gas': 200000,
+                'gasPrice': self.w3.eth.gas_price
+            })
             
-            # Get app ID from dstack client
-            info = self.dstack_client.info()
-            app_id = info.app_id
-            app_id_bytes = bytes.fromhex(app_id[2:])  # Remove 0x prefix
-            app_id_bytes32 = app_id_bytes.ljust(32, b'\x00')  # Pad to 32 bytes
+            signed_tx = tx_account.sign_transaction(tx)
             
-            # Store instance registration data
-            self.instance_id_bytes32 = instance_id_bytes32
-            self.registration_proof = proof
-            
-            # Output registration info for external NFT owner
-            logger.info("\n" + "="*60)
-            logger.info("REGISTRATION INFO FOR NFT OWNER")
-            logger.info("="*60)
-            logger.info(f"Instance Address: {self.wallet_address}")
-            logger.info(f"  -> This address needs ETH funding for gas")
-            logger.info(f"Instance ID (bytes32): 0x{instance_id_bytes32.hex()}")
-            logger.info(f"Derived Public Key: 0x{proof.derived_public_key.hex()}")
-            logger.info(f"App Signature: 0x{proof.app_signature.hex()}")
-            logger.info(f"KMS Signature: 0x{proof.kms_signature.hex()}")
-            logger.info(f"Purpose: {proof.purpose}")
-            logger.info(f"App ID: 0x{app_id_bytes32.hex()}")
-            logger.info("="*60)
-            logger.info("NFT owner should:")
-            logger.info("1. Fund instance address with ETH")
-            logger.info("2. Call contract.registerInstanceWithProof() with above data")
-            logger.info("="*60 + "\n")
-            
-            # Check if we're funded for basic operations
-            if balance == 0:
-                logger.warning("Instance address needs funding before it can participate in consensus")
-                return {"ready": False, "needs_funding": True, "address": self.wallet_address}
+            # Handle different Web3.py versions
+            if hasattr(signed_tx, 'rawTransaction'):
+                raw_tx = signed_tx.rawTransaction
+            elif hasattr(signed_tx, 'raw_transaction'):
+                raw_tx = signed_tx.raw_transaction
             else:
-                logger.info("Instance has sufficient balance for operations")
-                return {"ready": True, "needs_funding": False, "address": self.wallet_address}
+                raw_tx = signed_tx.rawTransaction if hasattr(signed_tx, 'rawTransaction') else signed_tx.raw_transaction
+            
+            tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
+            logger.info(f"Counter attestation submitted: value={value}, tx={tx_hash.hex()}")
+            
+        except Exception as e:
+            logger.error(f"Error submitting counter attestation: {e}")
+    
+    async def prepare_for_deployment(self):
+        """Prepare instance info for NFT owner pre-registration"""
+        print("Preparing deployment information...")
+        
+        info = self.dstack_client.info()
+        
+        print("\n" + "="*60)
+        print("DEPLOYMENT INFO FOR NFT OWNER")
+        print("="*60)
+        print(f"Instance ID: {self.instance_id}")
+        print(f"DStack Instance ID: {info.instance_id}")
+        print(f"App ID: {info.app_id}")
+        print(f"Host Address: {self.host_address} (must be pre-funded)")
+        print("="*60)
+        print("NFT owner should:")
+        print(f"1. Ensure host address {self.host_address} owns an NFT")
+        print(f"2. Fund the host address: {self.host_address}")
+        print(f"3. Register instance '{self.instance_id}' using the NFT")
+        print("="*60 + "\n")
+        
+        return {
+            "instance_id": self.instance_id,
+            "dstack_instance_id": info.instance_id,
+            "app_id": info.app_id,
+            "host_key_address": self.host_address
+        }
+    
+    async def register_instance(self):
+        """Register this instance with the contract"""
+        try:
+            # Check if we already have a token ID
+            self.token_id = self.contract.functions.walletToTokenId(self.host_address).call()
+            
+            if self.token_id == 0:
+                logger.warning("No NFT found for this wallet. NFT owner must mint first.")
+                return {"needs_nft": True, "address": self.host_address}
+            
+            logger.info(f"Found NFT token ID: {self.token_id}")
+            
+            # Check if instance is already registered
+            instance_info = self.contract.functions.getInstanceInfo(self.instance_id).call()
+            if instance_info[1]:  # active flag
+                logger.info("Instance already registered and active")
+                return {"ready": True, "token_id": self.token_id}
+            
+            # Register the instance
+            tx_account = self.host_account
+            
+            tx = self.contract.functions.registerInstance(self.instance_id).build_transaction({
+                'from': tx_account.address,
+                'nonce': self.w3.eth.get_transaction_count(tx_account.address),
+                'gas': 200000,
+                'gasPrice': self.w3.eth.gas_price
+            })
+            
+            signed_tx = tx_account.sign_transaction(tx)
+            
+            # Handle different Web3.py versions
+            if hasattr(signed_tx, 'rawTransaction'):
+                raw_tx = signed_tx.rawTransaction
+            elif hasattr(signed_tx, 'raw_transaction'):
+                raw_tx = signed_tx.raw_transaction
+            else:
+                raw_tx = signed_tx.rawTransaction if hasattr(signed_tx, 'rawTransaction') else signed_tx.raw_transaction
+            
+            tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
+            logger.info(f"Instance registration transaction sent: {tx_hash.hex()}")
+            
+            # Wait for confirmation
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+            if receipt.status == 1:
+                logger.info("Instance successfully registered!")
+                return {"ready": True, "token_id": self.token_id}
+            else:
+                logger.error("Instance registration failed")
+                return {"error": "Transaction failed"}
                 
         except Exception as e:
-            logger.error(f"Instance preparation failed: {e}")
-            return {"ready": False, "error": str(e)}
+            logger.error(f"Error registering instance: {e}")
+            return {"error": str(e)}
     
     async def start(self):
         """Start the counter service"""
@@ -239,15 +297,8 @@ class DistributedCounter:
         
         logger.info(f"Counter service started on port {self.port}")
         
-        # Prepare instance for external registration
-        registration_result = await self.register_instance()
-        
-        if registration_result.get("needs_funding"):
-            logger.info(f"Instance waiting for NFT owner to fund address: {registration_result['address']}")
-        elif registration_result.get("ready"):
-            logger.info("Instance is funded and ready for consensus participation")
-        else:
-            logger.error("Instance preparation failed - check logs above")
+        # Instance is ready to start - NFT should already be minted and instance registered by run_counter.sh
+        logger.info("Instance starting - NFT should be minted and instance registered by external script")
         
         # Keep running
         try:
@@ -282,7 +333,10 @@ class DistributedCounter:
         try:
             current_leader = self.contract.functions.currentLeader().call()
             
-            if current_leader == self.wallet_address:
+            # Check if we are the leader (using host address)
+            our_address = self.host_address
+            
+            if current_leader == our_address:
                 # I am the leader
                 if not self.is_leader:
                     logger.info("I am now the leader!")
@@ -326,16 +380,19 @@ class DistributedCounter:
     async def vote_no_confidence(self, target_leader: str):
         """Vote no confidence against a leader"""
         try:
+            # Use host key for transaction (mandatory)
+            tx_account = self.host_account
+            
             # Build transaction
             tx = self.contract.functions.castVote(target_leader, True).build_transaction({
-                'from': self.wallet_address,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address),
+                'from': tx_account.address,
+                'nonce': self.w3.eth.get_transaction_count(tx_account.address),
                 'gas': 200000,
                 'gasPrice': self.w3.eth.gas_price
             })
             
             # Sign and send transaction
-            signed_tx = self.account.sign_transaction(tx)
+            signed_tx = tx_account.sign_transaction(tx)
             
             # Handle different Web3.py versions
             if hasattr(signed_tx, 'rawTransaction'):
@@ -355,16 +412,19 @@ class DistributedCounter:
     async def vote_confidence(self, target_leader: str):
         """Vote confidence in a leader"""
         try:
+            # Use host key for transaction (mandatory)
+            tx_account = self.host_account
+            
             # Build transaction
             tx = self.contract.functions.castVote(target_leader, False).build_transaction({
-                'from': self.wallet_address,
-                'nonce': self.w3.eth.get_transaction_count(self.wallet_address),
+                'from': tx_account.address,
+                'nonce': self.w3.eth.get_transaction_count(tx_account.address),
                 'gas': 200000,
                 'gasPrice': self.w3.eth.gas_price
             })
             
             # Sign and send transaction
-            signed_tx = self.account.sign_transaction(tx)
+            signed_tx = tx_account.sign_transaction(tx)
             
             # Handle different Web3.py versions
             if hasattr(signed_tx, 'rawTransaction'):
@@ -419,11 +479,14 @@ class DistributedCounter:
             'timestamp': time.time(),
             'operation': 'increment',
             'new_value': self.counter_value,
-            'leader': self.wallet_address
+            'leader': self.host_address
         }
         self.operation_log.append(operation)
         
         logger.info(f"Counter incremented to {self.counter_value}")
+        
+        # Submit attestation to contract
+        await self.submit_counter_attestation(self.counter_value)
         
         return web.json_response({
             'success': True,
@@ -447,13 +510,14 @@ class DistributedCounter:
             
             return web.json_response({
                 'instance_id': self.instance_id,
-                'wallet_address': self.wallet_address,
+                'host_key_address': self.host_address,
                 'is_leader': self.is_leader,
                 'counter_value': self.counter_value,
                 'total_active_nodes': total_nodes,
                 'required_votes': required_votes,
                 'current_leader': current_leader,
-                'last_leader_heartbeat': self.last_leader_heartbeat
+                'last_leader_heartbeat': self.last_leader_heartbeat,
+                'token_id': self.token_id
             })
         except Exception as e:
             return web.json_response({
@@ -465,7 +529,7 @@ class DistributedCounter:
         try:
             active_instances = self.contract.functions.getActiveInstances().call()
             return web.json_response({
-                'active_instances': [instance.hex() for instance in active_instances],
+                'active_instances': active_instances,
                 'total_active': len(active_instances)
             })
         except Exception as e:
@@ -491,30 +555,34 @@ async def main():
     
     parser = argparse.ArgumentParser(description='Distributed Counter Service')
     parser.add_argument('--instance-id', required=True, help='Unique instance ID')
-    parser.add_argument('--wallet', help='Wallet private key (required when not using dstack)')
     parser.add_argument('--contract', required=True, help='Contract address')
     parser.add_argument('--rpc-url', default='http://localhost:8545', help='Ethereum RPC URL')
     parser.add_argument('--port', type=int, default=8080, help='HTTP port')
     
-    # DStack options
+    # Key options
+    parser.add_argument('--host-key', help='Host private key for transactions (pre-funded)')
     parser.add_argument('--dstack-socket', help='DStack socket path (default: ./simulator/dstack.sock)')
-    parser.add_argument('--dstack-key-path', help='DStack key derivation path (default: node/{instance-id})')
-    parser.add_argument('--dstack-key-purpose', help='DStack key purpose (default: ethereum)')
+    parser.add_argument('--prepare-only', action='store_true', help='Only prepare deployment info, do not start service')
     
     args = parser.parse_args()
     
-    # Create and start counter service
+    # Create counter service
     counter = DistributedCounter(
         instance_id=args.instance_id,
         contract_address=args.contract,
         rpc_url=args.rpc_url,
         port=args.port,
         dstack_socket=args.dstack_socket,
-        dstack_key_path=args.dstack_key_path,
-        dstack_key_purpose=args.dstack_key_purpose
+        host_private_key=args.host_key
     )
     
-    await counter.start()
+    if args.prepare_only:
+        # Just output deployment info and exit
+        await counter.prepare_for_deployment()
+        print("\nDeployment info prepared. Exiting preparation mode.")
+    else:
+        # Start the full counter service
+        await counter.start()
 
 if __name__ == '__main__':
     asyncio.run(main())
