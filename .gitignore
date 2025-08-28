@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+venv*/
+.env
+*.so
+
+# Foundry
+contracts/cache/
+contracts/out/
+contracts/lib/
+contracts/anvil.log
+contracts/broadcast/
+
+# Node.js
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# DStack simulator
+simulator/dstack.sock*
+simulator/external.sock*  
+simulator/guest.sock*
+simulator/tappd.sock*
+simulator/eventlog.json
+
+# Temporary files
+debug_signature_verification.py
