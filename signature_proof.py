@@ -23,12 +23,17 @@ try:
     from eth_account import Account
     from web3 import Web3
     from web3.types import bytes32
+    from ecdsa import SigningKey as EcdsaSigningKey, SECP256k1
 except ImportError:
     # Fallback for older web3 versions
     try:
         from web3.types import bytes32
     except ImportError:
         bytes32 = bytes
+    try:
+        from ecdsa import SigningKey as EcdsaSigningKey, SECP256k1
+    except ImportError:
+        EcdsaSigningKey = None
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +104,21 @@ class SignatureProofGenerator:
         if isinstance(kms_signature, str):
             kms_signature = bytes.fromhex(kms_signature.replace('0x', ''))
         
-        # Get public key from private key
+        # Get compressed public key from private key (33 bytes, not just address)
         account = Account.from_key(derived_private_key)
-        derived_public_key_bytes = bytes.fromhex(account.address[2:])
+        # Get the full public key in compressed format (33 bytes)
+        if EcdsaSigningKey:
+            # Convert private key to bytes if it's a string
+            private_key_bytes = derived_private_key
+            if isinstance(private_key_bytes, str):
+                private_key_bytes = bytes.fromhex(private_key_bytes.replace('0x', ''))
+            
+            signing_key = EcdsaSigningKey.from_string(private_key_bytes, curve=SECP256k1)
+            compressed_pubkey = signing_key.get_verifying_key().to_string("compressed")
+            derived_public_key_bytes = compressed_pubkey
+        else:
+            # Fallback to address if ecdsa not available
+            derived_public_key_bytes = bytes.fromhex(account.address[2:])
         
         # Get app ID from dstack client
         info = self.dstack_client.info()
@@ -170,8 +187,8 @@ class SignatureProofGenerator:
                 logger.error(f"Invalid instance_id_bytes32 length: {len(proof.instance_id_bytes32)}")
                 return False
             
-            # Check public key is 20 bytes (Ethereum address)
-            if len(proof.derived_public_key) != 20:
+            # Check public key is 33 bytes (compressed public key) or 20 bytes (Ethereum address)
+            if len(proof.derived_public_key) not in [20, 33]:
                 logger.error(f"Invalid derived_public_key length: {len(proof.derived_public_key)}")
                 return False
             
