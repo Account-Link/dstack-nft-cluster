@@ -16,45 +16,37 @@ contract DstackMembershipNFT is ERC721, Ownable {
     mapping(uint256 => string) public tokenToInstance;
     mapping(string => bool) public activeInstances;
     
-    // Leader election state
-    address public currentLeader;
-    uint256 public currentLeaderTokenId;
-    uint256 public totalActiveNodes;
-    uint256 public requiredVotes;
+    // P2P registry - simplified to just connection URLs
+    mapping(string => string) public instanceToConnectionUrl;
     
-    // Voting state
-    mapping(address => uint256) public noConfidenceCount;
-    mapping(address => Vote) public currentVotes;
+    // Cluster configuration
+    uint256 public maxNodes;
+    bool public publicMinting;
+    uint256 public mintPrice;
+    bool public devMode; // Skip URL validation when true
     
-    // Counter attestations (TEE-authenticated)
-    mapping(string => uint256) public latestCounterValue;   // instanceId → counter value
-    mapping(string => uint256) public lastAttestationTime; // instanceId → timestamp
-    
-    // Vote struct
-    struct Vote {
-        address voter;
-        address target;
-        uint256 tokenId;
-        bool isNoConfidence;
-        uint256 timestamp;
-    }
+    // Allowed base domains for production mode
+    mapping(string => bool) public allowedBaseDomains;
     
     // KMS root address for signature verification
     address public immutable kmsRootAddress;
     
     // Events
-    event LeaderElected(address indexed leader, uint256 indexed tokenId, string indexed instanceId);
-    event VoteCast(address indexed voter, address indexed target, bool isNoConfidence);
-    event LeaderChallenged(address indexed newLeader, address indexed oldLeader, uint256 voteCount);
     event InstanceRegistered(string indexed instanceId, uint256 indexed tokenId);
     event InstanceDeactivated(string indexed instanceId);
-    event CounterAttestation(string indexed instanceId, uint256 value, uint256 timestamp);
+    event PeerRegistered(string indexed instanceId, string connectionUrl);
+    event ClusterConfigUpdated(uint256 maxNodes, bool publicMinting, uint256 mintPrice);
+    event BaseDomainAdded(string indexed baseDomain);
+    event BaseDomainRemoved(string indexed baseDomain);
     
-    constructor(address _kmsRootAddress) ERC721("DStack Membership NFT", "DSTACK") Ownable(msg.sender) {
+    constructor(address _kmsRootAddress) ERC721("DStack Cluster NFT", "DSTACK") Ownable(msg.sender) {
         kmsRootAddress = _kmsRootAddress;
+        maxNodes = 100;
+        publicMinting = false;
+        mintPrice = 0;
+        devMode = true; // Default to dev mode for easier testing
     }
     
-    // Register instance (single step)
     function registerInstance(string calldata instanceId) external {
         require(instanceToToken[instanceId] == 0, "Instance already registered");
         require(walletToTokenId[msg.sender] != 0, "Must own NFT");
@@ -65,53 +57,43 @@ contract DstackMembershipNFT is ERC721, Ownable {
         instanceToToken[instanceId] = tokenId;
         tokenToInstance[tokenId] = instanceId;
         activeInstances[instanceId] = true;
-        totalActiveNodes++;
-        
-        // Update required votes for Byzantine fault tolerance
-        requiredVotes = (totalActiveNodes / 2) + 1;
         
         emit InstanceRegistered(instanceId, tokenId);
     }
     
-    // Submit counter attestation with TEE authentication
-    function submitCounterAttestation(
-        string calldata instanceId, 
-        uint256 value, 
-        bytes calldata appKeySignature,
-        bytes calldata kmsSignature
+    function registerPeer(
+        string calldata instanceId,
+        bytes calldata derivedPublicKey,
+        bytes calldata appSignature,
+        bytes calldata kmsSignature,
+        string calldata connectionUrl
     ) external {
         require(activeInstances[instanceId], "Instance not active");
+        require(instanceToToken[instanceId] != 0, "Instance not registered");
         
-        // Verify signature chain: app key -> KMS root
-        require(_verifySignatureChain(instanceId, value, appKeySignature, kmsSignature), "Invalid signature chain");
+        // Always verify signature chain (we have KMS simulator)
+        require(_verifySignatureChain(instanceId, derivedPublicKey, appSignature, kmsSignature), "Invalid signature chain");
         
-        // Update counter state
-        latestCounterValue[instanceId] = value;
-        lastAttestationTime[instanceId] = block.timestamp;
+        // In production mode, validate HTTPS URLs with allowed base domains
+        if (!devMode) {
+            require(_isValidHttpsUrl(connectionUrl), "Must be HTTPS URL in production");
+            require(_hasAllowedBaseDomain(connectionUrl), "Base domain not allowed");
+        }
         
-        emit CounterAttestation(instanceId, value, block.timestamp);
+        instanceToConnectionUrl[instanceId] = connectionUrl;
+        
+        emit PeerRegistered(instanceId, connectionUrl);
     }
     
-    // View function to verify signature chain
-    function verifySignatureChain(
-        string calldata instanceId,
-        uint256 value,
-        bytes calldata appKeySignature,
-        bytes calldata kmsSignature
-    ) external view returns (bool) {
-        return _verifySignatureChain(instanceId, value, appKeySignature, kmsSignature);
-    }
-    
-    // Internal function to verify signature chain
     function _verifySignatureChain(
         string memory instanceId,
-        uint256 value,
-        bytes memory appKeySignature,
+        bytes memory derivedPublicKey,
+        bytes memory appSignature,
         bytes memory kmsSignature
     ) internal view returns (bool) {
-        // Verify app key signature over the counter value
-        bytes32 messageHash = keccak256(abi.encodePacked(instanceId, ":", value));
-        address recoveredAppKey = _recoverAddress(messageHash, appKeySignature);
+        // Verify app key signature
+        bytes32 messageHash = keccak256(abi.encodePacked(instanceId, ":", derivedPublicKey));
+        address recoveredAppKey = _recoverAddress(messageHash, appSignature);
         require(recoveredAppKey != address(0), "Invalid app key signature");
         
         // Verify KMS signature over the app key
@@ -120,6 +102,36 @@ contract DstackMembershipNFT is ERC721, Ownable {
         require(recoveredKMS == kmsRootAddress, "Invalid KMS signature");
         
         return true;
+    }
+    
+    struct AppBootInfo {
+        string instanceId;
+        bytes32 imageHash;
+        uint256 timestamp;
+    }
+    
+    function isAppAllowed(AppBootInfo calldata bootInfo) external view returns (bool) {
+        return activeInstances[bootInfo.instanceId];
+    }
+    
+    function getPeerEndpoints() external view returns (string[] memory) {
+        string[] memory urls = new string[](_tokenIdCounter);
+        uint256 index = 0;
+        
+        for (uint256 i = 1; i <= _tokenIdCounter; i++) {
+            string memory instanceId = tokenToInstance[i];
+            if (activeInstances[instanceId] && bytes(instanceToConnectionUrl[instanceId]).length > 0) {
+                urls[index] = instanceToConnectionUrl[instanceId];
+                index++;
+            }
+        }
+        
+        // Resize array to actual length
+        assembly {
+            mstore(urls, index)
+        }
+        
+        return urls;
     }
     
     // Helper function to recover address from signature
@@ -143,8 +155,15 @@ contract DstackMembershipNFT is ERC721, Ownable {
         return ecrecover(messageHash, v, r, s);
     }
     
-    function mintNodeAccess(address to, string memory name) external onlyOwner returns (uint256) {
+    function mintNodeAccess(address to, string memory instanceId) external payable returns (uint256) {
         require(walletToTokenId[to] == 0, "Wallet already has NFT");
+        require(_tokenIdCounter < maxNodes, "Max nodes reached");
+        
+        if (publicMinting) {
+            require(msg.value >= mintPrice, "Insufficient payment");
+        } else {
+            require(msg.sender == owner(), "Only owner can mint");
+        }
         
         uint256 tokenId = _tokenIdCounter + 1;
         _tokenIdCounter = tokenId;
@@ -153,6 +172,46 @@ contract DstackMembershipNFT is ERC721, Ownable {
         walletToTokenId[to] = tokenId;
         
         return tokenId;
+    }
+    
+    function setClusterConfig(uint256 _maxNodes, bool _publicMinting, uint256 _mintPrice) external onlyOwner {
+        maxNodes = _maxNodes;
+        publicMinting = _publicMinting;
+        mintPrice = _mintPrice;
+        emit ClusterConfigUpdated(_maxNodes, _publicMinting, _mintPrice);
+    }
+    
+    function setDevMode(bool _devMode) external onlyOwner {
+        devMode = _devMode;
+    }
+    
+    function addBaseDomain(string calldata baseDomain) external onlyOwner {
+        allowedBaseDomains[baseDomain] = true;
+        emit BaseDomainAdded(baseDomain);
+    }
+    
+    function _isValidHttpsUrl(string memory url) internal pure returns (bool) {
+        bytes memory urlBytes = bytes(url);
+        if (urlBytes.length < 8) return false; // "https://" is 8 chars
+        
+        // Check if starts with "https://"
+        return (
+            urlBytes[0] == 'h' &&
+            urlBytes[1] == 't' &&
+            urlBytes[2] == 't' &&
+            urlBytes[3] == 'p' &&
+            urlBytes[4] == 's' &&
+            urlBytes[5] == ':' &&
+            urlBytes[6] == '/' &&
+            urlBytes[7] == '/'
+        );
+    }
+    
+    function _hasAllowedBaseDomain(string memory url) internal view returns (bool) {
+        // Simple check - would need more sophisticated parsing for production
+        // For now just check if any allowed domain appears in the URL
+        // This is a simplified implementation
+        return true; // TODO: Implement proper domain extraction and validation
     }
     
     function deactivateInstance(string calldata instanceId) external {
@@ -165,103 +224,29 @@ contract DstackMembershipNFT is ERC721, Ownable {
         delete instanceToToken[instanceId];
         delete tokenToInstance[tokenId];
         activeInstances[instanceId] = false;
-        totalActiveNodes--;
         
-        // Update required votes
-        requiredVotes = totalActiveNodes > 0 ? (totalActiveNodes / 2) + 1 : 0;
-        
-        // Clear leader if this was the leader
-        if (currentLeader == msg.sender) {
-            currentLeader = address(0);
-            currentLeaderTokenId = 0;
-        }
+        // Clear P2P registry
+        delete instanceToConnectionUrl[instanceId];
         
         emit InstanceDeactivated(instanceId);
     }
     
-    function electLeader() external {
-        require(walletToTokenId[msg.sender] != 0, "Must own NFT");
-        require(activeInstances[tokenToInstance[walletToTokenId[msg.sender]]], "Instance not active");
-        
-        // Simple leader election: first to call becomes leader
-        if (currentLeader == address(0)) {
-            currentLeader = msg.sender;
-            currentLeaderTokenId = walletToTokenId[msg.sender];
-            emit LeaderElected(msg.sender, currentLeaderTokenId, tokenToInstance[currentLeaderTokenId]);
-        }
-    }
-    
-    function castVote(address target, bool isNoConfidence) external {
-        require(walletToTokenId[msg.sender] != 0, "Must own NFT");
-        require(activeInstances[tokenToInstance[walletToTokenId[msg.sender]]], "Instance not active");
-        require(target != msg.sender, "Cannot vote for yourself");
-        
-        // Clear previous vote if any
-        address previousTarget = currentVotes[msg.sender].target;
-        if (previousTarget != address(0)) {
-            noConfidenceCount[previousTarget]--;
-        }
-        
-        // Set new vote
-        currentVotes[msg.sender] = Vote({
-            voter: msg.sender,
-            target: target,
-            tokenId: walletToTokenId[msg.sender],
-            isNoConfidence: isNoConfidence,
-            timestamp: block.timestamp
-        });
-        
-        if (isNoConfidence) {
-            noConfidenceCount[target]++;
-            
-            // Check if enough votes to challenge leader
-            if (target == currentLeader && noConfidenceCount[target] >= requiredVotes) {
-                _challengeLeader(target);
-            }
-        }
-        
-        emit VoteCast(msg.sender, target, isNoConfidence);
-    }
-    
-    function _challengeLeader(address oldLeader) internal {
-        require(currentLeader == oldLeader, "Not current leader");
-        
-        // Find new leader (lowest token ID among active non-challenged nodes)
-        uint256 newLeaderTokenId = type(uint256).max;
-        address newLeader = address(0);
-        
-        for (uint256 i = 1; i <= _tokenIdCounter; i++) {
-            string memory instanceId = tokenToInstance[i];
-            if (activeInstances[instanceId] && noConfidenceCount[ownerOf(i)] < requiredVotes) {
-                if (i < newLeaderTokenId) {
-                    newLeaderTokenId = i;
-                    newLeader = ownerOf(i);
-                }
-            }
-        }
-        
-        if (newLeader != address(0)) {
-            currentLeader = newLeader;
-            currentLeaderTokenId = newLeaderTokenId;
-            emit LeaderChallenged(newLeader, oldLeader, noConfidenceCount[oldLeader]);
-        } else {
-            // No valid leader found
-            currentLeader = address(0);
-            currentLeaderTokenId = 0;
-        }
-    }
     
     function getActiveInstances() external view returns (string[] memory) {
-        string[] memory instances = new string[](totalActiveNodes);
+        string[] memory instances = new string[](_tokenIdCounter);
         uint256 index = 0;
         
         for (uint256 i = 1; i <= _tokenIdCounter; i++) {
             string memory instanceId = tokenToInstance[i];
             if (activeInstances[instanceId]) {
                 instances[index] = instanceId;
-                instanceId;
                 index++;
             }
+        }
+        
+        // Resize array to actual length
+        assembly {
+            mstore(instances, index)
         }
         
         return instances;

@@ -55,13 +55,13 @@ contract DstackMembershipNFTTest is Test {
         assertTrue(nft.activeInstances(INSTANCE_1));
         assertEq(nft.instanceToToken(INSTANCE_1), 1);
         assertEq(nft.tokenToInstance(1), INSTANCE_1);
-        assertEq(nft.totalActiveNodes(), 1);
+        // Test that instance is properly registered
     }
     
-    function test_SubmitCounterAttestation() public {
+    function test_RegisterPeer() public {
         // First mint an NFT and register instance
         vm.prank(owner);
-        nft.mintNodeAccess(user1, "User 1 Node");
+        nft.mintNodeAccess(user1, INSTANCE_1);
         
         vm.prank(user1);
         nft.registerInstance(INSTANCE_1);
@@ -69,34 +69,41 @@ contract DstackMembershipNFTTest is Test {
         // Use a private key for signing
         uint256 privateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
         address signer = vm.addr(privateKey);
+        bytes memory derivedPubKey = abi.encodePacked(signer);
         
-        // Submit counter attestation with both signatures
-        uint256 counterValue = 42;
-        bytes memory appSignature = _createAttestSignature(privateKey, INSTANCE_1, counterValue);
+        bytes memory appSignature = _createPeerSignature(privateKey, INSTANCE_1, derivedPubKey);
         bytes memory kmsSignature = _createKmsSignature(INSTANCE_1, signer);
         
-        nft.submitCounterAttestation(INSTANCE_1, counterValue, appSignature, kmsSignature);
+        // Test dev mode - allows any URL
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://localhost:8080");
         
-        assertEq(nft.latestCounterValue(INSTANCE_1), counterValue);
-        assertTrue(nft.lastAttestationTime(INSTANCE_1) > 0);
+        assertEq(nft.instanceToConnectionUrl(INSTANCE_1), "http://localhost:8080");
     }
     
-    function test_VerifySignatureChain() public {
-        // Test the view function for signature verification
+    function test_GetPeerEndpoints() public {
+        vm.prank(owner);
+        nft.mintNodeAccess(user1, INSTANCE_1);
+        
+        vm.prank(user1);
+        nft.registerInstance(INSTANCE_1);
+        
         uint256 privateKey = 0x1234567890123456789012345678901234567890123456789012345678901234;
         address signer = vm.addr(privateKey);
+        bytes memory derivedPubKey = abi.encodePacked(signer);
         
-        uint256 counterValue = 42;
-        bytes memory appSignature = _createAttestSignature(privateKey, INSTANCE_1, counterValue);
+        bytes memory appSignature = _createPeerSignature(privateKey, INSTANCE_1, derivedPubKey);
         bytes memory kmsSignature = _createKmsSignature(INSTANCE_1, signer);
         
-        bool isValid = nft.verifySignatureChain(INSTANCE_1, counterValue, appSignature, kmsSignature);
-        assertTrue(isValid);
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080");
+        
+        string[] memory endpoints = nft.getPeerEndpoints();
+        assertEq(endpoints.length, 1);
+        assertEq(endpoints[0], "http://10.0.1.1:8080");
     }
     
     // Helper functions
-    function _createAttestSignature(uint256 privateKey, string memory instanceId, uint256 value) internal pure returns (bytes memory) {
-        bytes32 messageHash = keccak256(abi.encodePacked(instanceId, ":", value));
+    function _createPeerSignature(uint256 privateKey, string memory instanceId, bytes memory derivedPubKey) internal pure returns (bytes memory) {
+        bytes32 messageHash = keccak256(abi.encodePacked(instanceId, ":", derivedPubKey));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, messageHash);
         return abi.encodePacked(r, s, v);
     }
