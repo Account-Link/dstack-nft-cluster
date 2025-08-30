@@ -1,0 +1,7 @@
+web3==6.11.0
+eth-account==0.9.0
+eth-keys==0.4.0
+eth-utils==2.3.0
+requests==2.31.0
+asyncio-mqtt==0.13.0
+dstack-sdk
