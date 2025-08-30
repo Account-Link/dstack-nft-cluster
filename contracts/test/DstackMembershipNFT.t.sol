@@ -77,7 +77,7 @@ contract DstackMembershipNFTTest is Test {
         // Test dev mode - allows any URL
         bytes32 appId = keccak256("test-app-id");
         bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(signer)))); // Mock SEC1 compressed pubkey
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://localhost:8080", "ethereum", appId);
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://localhost:8080", "ethereum", appId, signer);
         
         assertEq(nft.instanceToConnectionUrl(INSTANCE_1), "http://localhost:8080");
     }
@@ -98,7 +98,7 @@ contract DstackMembershipNFTTest is Test {
         
         bytes32 appId = keccak256("test-app-id");
         bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(signer)))); // Mock SEC1 compressed pubkey
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080", "ethereum", appId);
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080", "ethereum", appId, signer);
         
         string[] memory endpoints = nft.getPeerEndpoints();
         assertEq(endpoints.length, 1);
@@ -111,8 +111,8 @@ contract DstackMembershipNFTTest is Test {
         string memory derivedHex = _bytesToHexWithoutPrefix(derivedPubKey);
         string memory message = string(abi.encodePacked("ethereum:", derivedHex));
         
-        // Use Ethereum signed message format
-        bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n", _toString(bytes(message).length), message));
+        // Use raw keccak256 hash (like working SimpleDstackVerifier)
+        bytes32 messageHash = keccak256(bytes(message));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, messageHash);
         return abi.encodePacked(r, s, v);
     }

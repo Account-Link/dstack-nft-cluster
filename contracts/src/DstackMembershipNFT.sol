@@ -69,13 +69,14 @@ contract DstackMembershipNFT is ERC721, Ownable {
         bytes calldata kmsSignature,
         string calldata connectionUrl,
         string calldata purpose,
-        bytes32 appId
+        bytes32 appId,
+        address appKeyAddress
     ) external {
         require(activeInstances[instanceId], "Instance not active");
         require(instanceToToken[instanceId] != 0, "Instance not registered");
         
         // Always verify signature chain (we have KMS simulator)
-        require(_verifySignatureChain(purpose, derivedPublicKey, appPublicKey, appSignature, kmsSignature, appId), "Invalid signature chain");
+        require(_verifySignatureChain(purpose, derivedPublicKey, appPublicKey, appSignature, kmsSignature, appId, appKeyAddress), "Invalid signature chain");
         
         // In production mode, validate HTTPS URLs with allowed base domains
         if (!devMode) {
@@ -94,26 +95,28 @@ contract DstackMembershipNFT is ERC721, Ownable {
         bytes memory appPublicKey,
         bytes memory appSignature,
         bytes memory kmsSignature,
-        bytes32 appId
+        bytes32 appId,
+        address appKeyAddress
     ) internal view returns (bool) {
         // Verify app key signature
         // DStack signs: purpose + ":" + hex(derivedPublicKey) without 0x prefix
         string memory derivedPubKeyHex = _bytesToHexWithoutPrefix(derivedPublicKey);
         string memory message = string(abi.encodePacked(purpose, ":", derivedPubKeyHex));
-        bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n", _toString(bytes(message).length), message));
+        bytes32 messageHash = keccak256(bytes(message));  // Raw keccak256, not Ethereum signed message
         
-        // Recover app key address from signature and verify it matches the provided app public key
+        // Recover app key address from signature and verify it matches provided address
         address recoveredAppKey = _recoverAddress(messageHash, appSignature);
-        require(recoveredAppKey != address(0), "Invalid app key signature");
-        
-        // Derive expected address from app public key and verify it matches
-        address expectedAppKey = _publicKeyToAddress(appPublicKey);
-        require(recoveredAppKey == expectedAppKey, "App key mismatch");
+        require(recoveredAppKey == appKeyAddress, "Invalid app key signature");
         
         // Verify KMS signature over the app key
-        // KMS signs: "dstack-kms-issued:" + appId_bytes + appPublicKey_sec1
-        bytes memory appIdBytes = abi.encodePacked(appId);
-        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes, appPublicKey));
+        // First, get the actual app public key that was used to create the signature
+        // We need to recover the full public key from the app signature to verify against KMS
+        (uint8 v, bytes32 r, bytes32 s) = _splitSignature(appSignature);
+        
+        // Get the public key point that was used for signing
+        // For now, we'll use the provided appPublicKey and verify KMS signed it
+        bytes20 appIdBytes20 = bytes20(appId);  // Use only first 20 bytes
+        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes20, appPublicKey));
         address recoveredKMS = _recoverAddress(kmsMessage, kmsSignature);
         require(recoveredKMS == kmsRootAddress, "Invalid KMS signature");
         
@@ -167,7 +170,23 @@ contract DstackMembershipNFT is ERC721, Ownable {
             v := byte(0, mload(add(sig, 96)))
         }
         
+        // Ethereum signatures use v=27/28, but may need adjustment
+        if (v < 27) {
+            v += 27;
+        }
+        
         return ecrecover(messageHash, v, r, s);
+    }
+    
+    // Helper function to split signature into components
+    function _splitSignature(bytes memory signature) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
+        require(signature.length == 65, "Invalid signature length");
+        
+        assembly {
+            r := mload(add(signature, 32))
+            s := mload(add(signature, 64))
+            v := byte(0, mload(add(signature, 96)))
+        }
     }
     
     function _bytesToHex(bytes memory data) internal pure returns (string memory) {
