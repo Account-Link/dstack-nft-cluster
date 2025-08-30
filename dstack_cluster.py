@@ -66,7 +66,8 @@ class DStackP2PSDK:
                     {"name": "kmsSignature", "type": "bytes"},
                     {"name": "connectionUrl", "type": "string"},
                     {"name": "purpose", "type": "string"},
-                    {"name": "appId", "type": "bytes32"}
+                    {"name": "appId", "type": "bytes32"},
+                    {"name": "appKeyAddress", "type": "address"}
                 ],
                 "name": "registerPeer",
                 "outputs": [],
@@ -118,11 +119,15 @@ class DStackP2PSDK:
             # Get app public key from signature verification
             from eth_keys import keys
             from eth_utils import keccak
+            from eth_account import Account
             derived_pubkey_sec1 = keys.PrivateKey(proof.derived_private_key).public_key.to_compressed_bytes()
             app_message = f"ethereum:{derived_pubkey_sec1.hex()}"
-            app_message_hash = keccak(text=app_message)
+            app_message_hash = keccak(bytes(app_message, 'utf-8'))  # Use raw keccak256 like the contract
             app_signature_obj = keys.Signature(app_signature)
             app_pubkey_sec1 = app_signature_obj.recover_public_key_from_msg_hash(app_message_hash).to_compressed_bytes()
+            
+            # Recover app key address from signature
+            app_key_address = Account._recover_hash(app_message_hash, signature=app_signature)
             
             # Convert app_id to bytes32
             app_id_bytes32 = bytes.fromhex(app_id.replace('0x', '')).ljust(32, b'\x00')[:32]
@@ -136,6 +141,7 @@ class DStackP2PSDK:
             logger.info(f"KMS signature: {kms_signature.hex()}")
             logger.info(f"App ID: {app_id}")
             logger.info(f"App ID bytes32: {app_id_bytes32.hex()}")
+            logger.info(f"App key address: {app_key_address}")
             
             # Get the default account (first account from anvil)
             accounts = self.w3.eth.accounts
@@ -166,7 +172,8 @@ class DStackP2PSDK:
                     kms_signature,
                     self.connection_url,
                     "ethereum",           # purpose
-                    app_id_bytes32        # app ID as bytes32
+                    app_id_bytes32,       # app ID as bytes32
+                    app_key_address       # app key address
                 ).transact({'from': tx_account})
                 
                 # Wait for transaction receipt
@@ -224,17 +231,12 @@ class DStackP2PSDK:
                 logger.error(f"Monitor peers error: {e}")
                 await asyncio.sleep(10)
 
-# Demo usage
 async def demo_p2p_usage():
-    """Demo of the ultra-simple 3-line interface"""
-    
-    # Setup logging
     logging.basicConfig(level=logging.INFO)
     
-    # The magical 3-line interface:
     # Production: sdk = DStackP2PSDK("0x123...", "https://abc123-443s.dstack-pha-prod7.phala.network")
     # Dev/Testing: 
-    sdk = DStackP2PSDK("0x4C4a2f8c81640e47606d3fd77B353E87Ba015584", "http://localhost:8080")
+    sdk = DStackP2PSDK("0x2B0d36FACD61B71CC05ab8F3D2355ec3631C0dd5", "http://localhost:8080")
     success = await sdk.register()
     
     if success:
