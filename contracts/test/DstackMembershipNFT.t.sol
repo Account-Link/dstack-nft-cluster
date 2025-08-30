@@ -75,7 +75,9 @@ contract DstackMembershipNFTTest is Test {
         bytes memory kmsSignature = _createKmsSignature(INSTANCE_1, signer);
         
         // Test dev mode - allows any URL
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://localhost:8080", "ethereum");
+        bytes32 appId = keccak256("test-app-id");
+        bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(signer)))); // Mock SEC1 compressed pubkey
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://localhost:8080", "ethereum", appId);
         
         assertEq(nft.instanceToConnectionUrl(INSTANCE_1), "http://localhost:8080");
     }
@@ -94,7 +96,9 @@ contract DstackMembershipNFTTest is Test {
         bytes memory appSignature = _createPeerSignature(privateKey, INSTANCE_1, derivedPubKey);
         bytes memory kmsSignature = _createKmsSignature(INSTANCE_1, signer);
         
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080", "ethereum");
+        bytes32 appId = keccak256("test-app-id");
+        bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(signer)))); // Mock SEC1 compressed pubkey
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080", "ethereum", appId);
         
         string[] memory endpoints = nft.getPeerEndpoints();
         assertEq(endpoints.length, 1);
@@ -103,16 +107,55 @@ contract DstackMembershipNFTTest is Test {
     
     // Helper functions
     function _createPeerSignature(uint256 privateKey, string memory instanceId, bytes memory derivedPubKey) internal pure returns (bytes memory) {
-        bytes32 messageHash = keccak256(abi.encodePacked(instanceId, ":", derivedPubKey));
+        // DStack message format: purpose + ":" + hex(derivedPublicKey) without 0x prefix
+        string memory derivedHex = _bytesToHexWithoutPrefix(derivedPubKey);
+        string memory message = string(abi.encodePacked("ethereum:", derivedHex));
+        
+        // Use Ethereum signed message format
+        bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n", _toString(bytes(message).length), message));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, messageHash);
         return abi.encodePacked(r, s, v);
     }
     
     function _createKmsSignature(string memory instanceId, address appKeyAddr) internal pure returns (bytes memory) {
-        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", instanceId, appKeyAddr));
+        // KMS message format: "dstack-kms-issued:" + appId_bytes + appPublicKey_sec1
+        bytes32 appId = keccak256("test-app-id");
+        bytes memory appIdBytes = abi.encodePacked(appId);
+        bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(appKeyAddr)))); // Mock SEC1 compressed pubkey
+        
+        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes, appPubKey));
         // Use the known KMS private key
         uint256 kmsPrivateKey = 0x1234567890123456789012345678901234567890123456789012345678901235;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(kmsPrivateKey, kmsMessage);
         return abi.encodePacked(r, s, v);
+    }
+    
+    function _bytesToHexWithoutPrefix(bytes memory data) internal pure returns (string memory) {
+        bytes memory alphabet = "0123456789abcdef";
+        bytes memory str = new bytes(data.length * 2);
+        for (uint256 i = 0; i < data.length; i++) {
+            str[i * 2] = alphabet[uint256(uint8(data[i] >> 4))];
+            str[i * 2 + 1] = alphabet[uint256(uint8(data[i] & 0x0f))];
+        }
+        return string(str);
+    }
+    
+    function _toString(uint256 value) internal pure returns (string memory) {
+        if (value == 0) {
+            return "0";
+        }
+        uint256 temp = value;
+        uint256 digits;
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
+        bytes memory buffer = new bytes(digits);
+        while (value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+            value /= 10;
+        }
+        return string(buffer);
     }
 }

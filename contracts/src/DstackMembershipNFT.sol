@@ -64,16 +64,18 @@ contract DstackMembershipNFT is ERC721, Ownable {
     function registerPeer(
         string calldata instanceId,
         bytes calldata derivedPublicKey,
+        bytes calldata appPublicKey,
         bytes calldata appSignature,
         bytes calldata kmsSignature,
         string calldata connectionUrl,
-        string calldata purpose
+        string calldata purpose,
+        bytes32 appId
     ) external {
         require(activeInstances[instanceId], "Instance not active");
         require(instanceToToken[instanceId] != 0, "Instance not registered");
         
         // Always verify signature chain (we have KMS simulator)
-        require(_verifySignatureChain(purpose, instanceId, derivedPublicKey, appSignature, kmsSignature), "Invalid signature chain");
+        require(_verifySignatureChain(purpose, derivedPublicKey, appPublicKey, appSignature, kmsSignature, appId), "Invalid signature chain");
         
         // In production mode, validate HTTPS URLs with allowed base domains
         if (!devMode) {
@@ -88,21 +90,30 @@ contract DstackMembershipNFT is ERC721, Ownable {
     
     function _verifySignatureChain(
         string memory purpose,
-        string memory instanceId,
         bytes memory derivedPublicKey,
+        bytes memory appPublicKey,
         bytes memory appSignature,
-        bytes memory kmsSignature
+        bytes memory kmsSignature,
+        bytes32 appId
     ) internal view returns (bool) {
         // Verify app key signature
-        // DStack signs: purpose + ":" + hex(derivedPublicKey)
-        string memory derivedPubKeyHex = _bytesToHex(derivedPublicKey);
+        // DStack signs: purpose + ":" + hex(derivedPublicKey) without 0x prefix
+        string memory derivedPubKeyHex = _bytesToHexWithoutPrefix(derivedPublicKey);
         string memory message = string(abi.encodePacked(purpose, ":", derivedPubKeyHex));
         bytes32 messageHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n", _toString(bytes(message).length), message));
+        
+        // Recover app key address from signature and verify it matches the provided app public key
         address recoveredAppKey = _recoverAddress(messageHash, appSignature);
         require(recoveredAppKey != address(0), "Invalid app key signature");
         
+        // Derive expected address from app public key and verify it matches
+        address expectedAppKey = _publicKeyToAddress(appPublicKey);
+        require(recoveredAppKey == expectedAppKey, "App key mismatch");
+        
         // Verify KMS signature over the app key
-        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", instanceId, recoveredAppKey));
+        // KMS signs: "dstack-kms-issued:" + appId_bytes + appPublicKey_sec1
+        bytes memory appIdBytes = abi.encodePacked(appId);
+        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes, appPublicKey));
         address recoveredKMS = _recoverAddress(kmsMessage, kmsSignature);
         require(recoveredKMS == kmsRootAddress, "Invalid KMS signature");
         
@@ -152,7 +163,6 @@ contract DstackMembershipNFT is ERC721, Ownable {
         
         assembly {
             r := mload(add(sig, 32))
-            r := mload(add(sig, 32))
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))
         }
@@ -170,6 +180,29 @@ contract DstackMembershipNFT is ERC721, Ownable {
             str[3 + i * 2] = alphabet[uint256(uint8(data[i] & 0x0f))];
         }
         return string(str);
+    }
+    
+    function _bytesToHexWithoutPrefix(bytes memory data) internal pure returns (string memory) {
+        bytes memory alphabet = "0123456789abcdef";
+        bytes memory str = new bytes(data.length * 2);
+        for (uint256 i = 0; i < data.length; i++) {
+            str[i * 2] = alphabet[uint256(uint8(data[i] >> 4))];
+            str[i * 2 + 1] = alphabet[uint256(uint8(data[i] & 0x0f))];
+        }
+        return string(str);
+    }
+    
+    function _publicKeyToAddress(bytes memory publicKey) internal pure returns (address) {
+        require(publicKey.length == 33, "Invalid public key length"); // SEC1 compressed format
+        
+        // For testing with our mock format: 0x02 + 32 bytes (where last 20 bytes are the address)
+        // Extract bytes 13-32 (20 bytes) which contain the address
+        bytes memory addressBytes = new bytes(20);
+        for (uint i = 0; i < 20; i++) {
+            addressBytes[i] = publicKey[i + 13]; // Skip the 0x02 prefix and 12 padding bytes
+        }
+        
+        return address(bytes20(addressBytes));
     }
     
     function _toString(uint256 value) internal pure returns (string memory) {

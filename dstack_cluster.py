@@ -61,9 +61,12 @@ class DStackP2PSDK:
                 "inputs": [
                     {"name": "instanceId", "type": "string"},
                     {"name": "derivedPublicKey", "type": "bytes"},
+                    {"name": "appPublicKey", "type": "bytes"},
                     {"name": "appSignature", "type": "bytes"},
                     {"name": "kmsSignature", "type": "bytes"},
-                    {"name": "connectionUrl", "type": "string"}
+                    {"name": "connectionUrl", "type": "string"},
+                    {"name": "purpose", "type": "string"},
+                    {"name": "appId", "type": "bytes32"}
                 ],
                 "name": "registerPeer",
                 "outputs": [],
@@ -105,19 +108,34 @@ class DStackP2PSDK:
             # Generate signature proof for peer registration
             sig_gen = SignatureProofGenerator(self.dstack_socket)
             
-            # Create signature proof using correct API
-            proof = sig_gen.generate_proof(self.instance_id, "ethereum/register", "ethereum")
+            # Create signature proof using correct API  
+            proof = sig_gen.generate_proof("wallet/ethereum", "ethereum")
             
-            derived_public_key = proof.derived_public_key
             app_signature = proof.app_signature
             kms_signature = proof.kms_signature
+            app_id = proof.app_id
+            
+            # Get app public key from signature verification
+            from eth_keys import keys
+            from eth_utils import keccak
+            derived_pubkey_sec1 = keys.PrivateKey(proof.derived_private_key).public_key.to_compressed_bytes()
+            app_message = f"ethereum:{derived_pubkey_sec1.hex()}"
+            app_message_hash = keccak(text=app_message)
+            app_signature_obj = keys.Signature(app_signature)
+            app_pubkey_sec1 = app_signature_obj.recover_public_key_from_msg_hash(app_message_hash).to_compressed_bytes()
+            
+            # Convert app_id to bytes32
+            app_id_bytes32 = bytes.fromhex(app_id.replace('0x', '')).ljust(32, b'\x00')[:32]
             
             # Actually call registerPeer on contract
             logger.info(f"Calling registerPeer with connection URL: {self.connection_url}")
             logger.info(f"Instance ID: {self.instance_id}")
-            logger.info(f"Derived public key: {derived_public_key.hex()}")
+            logger.info(f"Derived public key: {derived_pubkey_sec1.hex()}")
+            logger.info(f"App public key: {app_pubkey_sec1.hex()}")
             logger.info(f"App signature: {app_signature.hex()}")
             logger.info(f"KMS signature: {kms_signature.hex()}")
+            logger.info(f"App ID: {app_id}")
+            logger.info(f"App ID bytes32: {app_id_bytes32.hex()}")
             
             # Get the default account (first account from anvil)
             accounts = self.w3.eth.accounts
@@ -129,14 +147,26 @@ class DStackP2PSDK:
             tx_account = accounts[0]
             logger.info(f"Using account {tx_account} for transaction")
             
+            # First register the instance if not already registered
+            try:
+                logger.info(f"Registering instance {self.instance_id}")
+                instance_tx = self.contract.functions.registerInstance(self.instance_id).transact({'from': tx_account})
+                instance_receipt = self.w3.eth.wait_for_transaction_receipt(instance_tx)
+                logger.info(f"registerInstance transaction successful: {instance_receipt.transactionHash.hex()}")
+            except Exception as e:
+                logger.warning(f"registerInstance failed (may already be registered): {e}")
+            
             # Call registerPeer function
             try:
                 tx_hash = self.contract.functions.registerPeer(
                     self.instance_id,
-                    derived_public_key,
+                    derived_pubkey_sec1,  # derived public key (SEC1 compressed)
+                    app_pubkey_sec1,      # app public key (SEC1 compressed)
                     app_signature,
                     kms_signature,
-                    self.connection_url
+                    self.connection_url,
+                    "ethereum",           # purpose
+                    app_id_bytes32        # app ID as bytes32
                 ).transact({'from': tx_account})
                 
                 # Wait for transaction receipt
@@ -204,7 +234,7 @@ async def demo_p2p_usage():
     # The magical 3-line interface:
     # Production: sdk = DStackP2PSDK("0x123...", "https://abc123-443s.dstack-pha-prod7.phala.network")
     # Dev/Testing: 
-    sdk = DStackP2PSDK("0x123...", "http://localhost:8080")
+    sdk = DStackP2PSDK("0x4C4a2f8c81640e47606d3fd77B353E87Ba015584", "http://localhost:8080")
     success = await sdk.register()
     
     if success:
