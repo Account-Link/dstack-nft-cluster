@@ -1,265 +1,95 @@
 #!/usr/bin/env python3
 """
-Signature Proof Generation and Verification Module
+DStack Signature Chain Verification
 
-This module handles the core logic for generating and verifying signature chain proofs
-for DStack TEE attestation, separate from the distributed counter application logic.
+Simplified module for verifying DStack signature chains that prove:
+1. App Key signed the derived key
+2. KMS Root signed the app key 
 """
 
-import asyncio
 import hashlib
-import logging
-from typing import Optional, Tuple, Dict, Any
+import os
 from dataclasses import dataclass
-
-try:
-    from dstack_sdk import DstackClient
-    DSTACK_AVAILABLE = True
-except ImportError:
-    DSTACK_AVAILABLE = False
-    DstackClient = None
-
-try:
-    from eth_account import Account
-    from web3 import Web3
-    from web3.types import bytes32
-    from ecdsa import SigningKey as EcdsaSigningKey, SECP256k1
-except ImportError:
-    # Fallback for older web3 versions
-    try:
-        from web3.types import bytes32
-    except ImportError:
-        bytes32 = bytes
-    try:
-        from ecdsa import SigningKey as EcdsaSigningKey, SECP256k1
-    except ImportError:
-        EcdsaSigningKey = None
-
-logger = logging.getLogger(__name__)
+from dstack_sdk import DstackClient
+from eth_account import Account
+from eth_utils import keccak
+from eth_keys import keys
 
 @dataclass
 class SignatureProof:
-    """Container for signature chain proof components"""
-    instance_id_bytes32: bytes
-    derived_public_key: bytes
-    app_signature: bytes
-    kms_signature: bytes
+    """Complete signature chain proof"""
+    derived_private_key: bytes
+    app_signature: bytes  # App signs derived key
+    kms_signature: bytes  # KMS signs app key
     purpose: str
-    app_id: bytes
-
-@dataclass
-class RegistrationData:
-    """Container for registration data"""
-    token_id: int
-    instance_id_bytes32: bytes
-    derived_public_key: bytes
-    app_signature: bytes
-    kms_signature: bytes
-    purpose: str
-    app_id: bytes
+    app_id: str
 
 class SignatureProofGenerator:
-    """Handles generation and verification of signature chain proofs"""
+    """Generates and verifies DStack signature chain proofs"""
     
     def __init__(self, dstack_socket: str = None):
-        if not DSTACK_AVAILABLE:
-            raise RuntimeError("DStack SDK is required but not available")
-        
-        self.dstack_socket = dstack_socket or './simulator/dstack.sock'
-        self.dstack_client = DstackClient(self.dstack_socket)
+        # Default to production socket, fallback to simulator
+        if dstack_socket is None:
+            if os.path.exists('/var/run/dstack.sock'):
+                dstack_socket = '/var/run/dstack.sock'
+            else:
+                dstack_socket = './simulator/dstack.sock'
+        self.client = DstackClient(dstack_socket)
     
-    def generate_proof(self, instance_id: str, key_path: str, 
-                      key_purpose: str = "ethereum") -> SignatureProof:
-        """
-        Generate a complete signature chain proof for an instance
+    def generate_proof(self, key_path: str, purpose: str = "mainnet") -> SignatureProof:
+        """Generate complete signature chain proof"""
+        # Get key and signature chain from DStack
+        key_response = self.client.get_key(key_path, purpose)
+        info = self.client.info()
         
-        Args:
-            instance_id: String identifier for the instance
-            key_path: DStack key derivation path
-            key_purpose: Purpose for key derivation
-            
-        Returns:
-            SignatureProof object containing all proof components
-        """
-        # Convert instance ID to bytes32
-        instance_hash = hashlib.sha256(instance_id.encode()).digest()
-        instance_id_bytes32 = bytes32(instance_hash)
-        
-        # Get signature chain proof from DStack
-        key_response = self.dstack_client.get_key(key_path, key_purpose)
-        
-        # Extract signature chain components
-        derived_private_key = key_response.key
-        signature_chain = key_response.signature_chain
-        
-        if len(signature_chain) < 2:
-            raise RuntimeError(f"Insufficient signature chain length: {len(signature_chain)}")
-        
-        app_signature = signature_chain[0]
-        kms_signature = signature_chain[1]
-        
-        # Ensure signatures are in bytes format
-        if isinstance(app_signature, str):
-            app_signature = bytes.fromhex(app_signature.replace('0x', ''))
-        if isinstance(kms_signature, str):
-            kms_signature = bytes.fromhex(kms_signature.replace('0x', ''))
-        
-        # Get compressed public key from private key (33 bytes, not just address)
-        account = Account.from_key(derived_private_key)
-        # Get the full public key in compressed format (33 bytes)
-        if EcdsaSigningKey:
-            # Convert private key to bytes if it's a string
-            private_key_bytes = derived_private_key
-            if isinstance(private_key_bytes, str):
-                private_key_bytes = bytes.fromhex(private_key_bytes.replace('0x', ''))
-            
-            signing_key = EcdsaSigningKey.from_string(private_key_bytes, curve=SECP256k1)
-            compressed_pubkey = signing_key.get_verifying_key().to_string("compressed")
-            derived_public_key_bytes = compressed_pubkey
-        else:
-            # Fallback to address if ecdsa not available
-            derived_public_key_bytes = bytes.fromhex(account.address[2:])
-        
-        # Get app ID from dstack client
-        info = self.dstack_client.info()
-        app_id = info.app_id
-        
-        # Convert app_id to bytes32 (remove 0x prefix and pad to 32 bytes)
-        app_id_bytes = bytes.fromhex(app_id[2:])  # Remove 0x prefix
-        app_id_bytes32 = app_id_bytes.ljust(32, b'\x00')  # Pad to 32 bytes
+        # Extract components
+        derived_private_key = bytes.fromhex(key_response.key.replace('0x', ''))
+        app_signature = bytes.fromhex(key_response.signature_chain[0].replace('0x', ''))
+        kms_signature = bytes.fromhex(key_response.signature_chain[1].replace('0x', ''))
         
         return SignatureProof(
-            instance_id_bytes32=instance_id_bytes32,
-            derived_public_key=derived_public_key_bytes,
+            derived_private_key=derived_private_key,
             app_signature=app_signature,
             kms_signature=kms_signature,
-            purpose=key_purpose,
-            app_id=app_id_bytes32  # Store as bytes32
+            purpose=purpose,
+            app_id=info.app_id
         )
     
-    def get_registration_data(self, contract: Any, wallet_address: str, 
-                            instance_id: str, key_path: str, 
-                            key_purpose: str = "ethereum") -> RegistrationData:
+    def verify_proof(self, proof: SignatureProof, expected_kms_root: str) -> bool:
         """
-        Get complete registration data including NFT token ID
+        Verify complete signature chain
         
-        Args:
-            contract: Web3 contract instance
-            wallet_address: Ethereum wallet address
-            instance_id: String identifier for the instance
-            key_path: DStack key derivation path
-            key_purpose: Purpose for key derivation
-            
-        Returns:
-            RegistrationData object ready for contract registration
-        """
-        # Get token ID for this wallet
-        token_id = contract.functions.walletToTokenId(wallet_address).call()
-        if token_id == 0:
-            raise RuntimeError(f"No NFT found for wallet {wallet_address}")
-        
-        # Generate signature proof
-        proof = self.generate_proof(instance_id, key_path, key_purpose)
-        
-        return RegistrationData(
-            token_id=token_id,
-            instance_id_bytes32=proof.instance_id_bytes32,
-            derived_public_key=proof.derived_public_key,
-            app_signature=proof.app_signature,
-            kms_signature=proof.kms_signature,
-            purpose=proof.purpose,
-            app_id=proof.app_id
-        )
-    
-    def verify_proof_format(self, proof: SignatureProof) -> bool:
-        """
-        Verify that a proof has the correct format and components
-        
-        Args:
-            proof: SignatureProof object to verify
-            
-        Returns:
-            True if proof format is valid
+        Returns True if:
+        1. App key correctly signed the derived key
+        2. KMS root correctly signed the app key
         """
         try:
-            # Check instance ID is 32 bytes
-            if len(proof.instance_id_bytes32) != 32:
-                logger.error(f"Invalid instance_id_bytes32 length: {len(proof.instance_id_bytes32)}")
-                return False
+            # Step 1: Verify app key signed derived key
+            # Message format: "{purpose}:{derived_pubkey_sec1_hex}"
+            derived_public_key = keys.PrivateKey(proof.derived_private_key).public_key
+            derived_pubkey_sec1 = derived_public_key.to_compressed_bytes()
+            app_message = f"{proof.purpose}:{derived_pubkey_sec1.hex()}"
+            app_message_hash = keccak(text=app_message)
             
-            # Check public key is 33 bytes (compressed public key) or 20 bytes (Ethereum address)
-            if len(proof.derived_public_key) not in [20, 33]:
-                logger.error(f"Invalid derived_public_key length: {len(proof.derived_public_key)}")
-                return False
+            app_signer = Account._recover_hash(app_message_hash, signature=proof.app_signature)
             
-            # Check signatures are reasonable lengths (at least 65 bytes for ECDSA)
-            if len(proof.app_signature) < 65:
-                logger.error(f"App signature too short: {len(proof.app_signature)}")
-                return False
+            # Step 2: Verify KMS signed app key  
+            # Message format: "dstack-kms-issued:{app_id_bytes}{app_pubkey_sec1}"
+            app_id_bytes = bytes.fromhex(proof.app_id.replace('0x', ''))
             
-            if len(proof.kms_signature) < 65:
-                logger.error(f"KMS signature too short: {len(proof.kms_signature)}")
-                return False
+            # Get app public key from recovered app signer
+            app_signature_obj = keys.Signature(proof.app_signature)
+            app_pubkey_sec1 = app_signature_obj.recover_public_key_from_msg_hash(app_message_hash).to_compressed_bytes()
             
-            # Check purpose is not empty
-            if not proof.purpose or len(proof.purpose) == 0:
-                logger.error("Purpose is empty")
-                return False
+            kms_message = b"dstack-kms-issued:" + app_id_bytes + app_pubkey_sec1
+            kms_message_hash = keccak(kms_message)
             
-            # Check app ID is not empty
-            if not proof.app_id or len(proof.app_id) == 0:
-                logger.error("App ID is empty")
-                return False
+            kms_signer = Account._recover_hash(kms_message_hash, signature=proof.kms_signature)
             
-            return True
+            # Verify against expected KMS root
+            return kms_signer.lower() == expected_kms_root.lower()
             
         except Exception as e:
-            logger.error(f"Proof format verification failed: {e}")
+            print(f"Verification failed: {e}")
             return False
-    
-    def get_dstack_info(self) -> Dict[str, Any]:
-        """Get DStack client information for debugging"""
-        try:
-            info = self.dstack_client.info()
-            return {
-                'app_id': info.app_id,
-                'socket': self.dstack_socket,
-                'available': True
-            }
-        except Exception as e:
-            return {
-                'error': str(e),
-                'socket': self.dstack_socket,
-                'available': False
-            }
 
-async def test_signature_proof():
-    """Test function for signature proof generation"""
-    try:
-        generator = SignatureProofGenerator()
-        
-        # Test DStack connection
-        dstack_info = generator.get_dstack_info()
-        print(f"DStack Info: {dstack_info}")
-        
-        if not dstack_info['available']:
-            print("DStack not available, skipping proof generation test")
-            return
-        
-        # Test proof generation
-        proof = generator.generate_proof("test-node", "test/path", "ethereum")
-        print(f"Generated proof: {proof}")
-        
-        # Test proof format verification
-        is_valid = generator.verify_proof_format(proof)
-        print(f"Proof format valid: {is_valid}")
-        
-        print("Signature proof test completed successfully!")
-        
-    except Exception as e:
-        print(f"Signature proof test failed: {e}")
-        import traceback
-        traceback.print_exc()
-
-if __name__ == "__main__":
-    asyncio.run(test_signature_proof())

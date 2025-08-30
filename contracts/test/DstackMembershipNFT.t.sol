@@ -75,7 +75,7 @@ contract DstackMembershipNFTTest is Test {
         bytes memory kmsSignature = _createKmsSignature(INSTANCE_1, signer);
         
         // Test dev mode - allows any URL
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://localhost:8080");
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://localhost:8080", "ethereum");
         
         assertEq(nft.instanceToConnectionUrl(INSTANCE_1), "http://localhost:8080");
     }
@@ -94,7 +94,7 @@ contract DstackMembershipNFTTest is Test {
         bytes memory appSignature = _createPeerSignature(privateKey, INSTANCE_1, derivedPubKey);
         bytes memory kmsSignature = _createKmsSignature(INSTANCE_1, signer);
         
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080");
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080", "ethereum");
         
         string[] memory endpoints = nft.getPeerEndpoints();
         assertEq(endpoints.length, 1);

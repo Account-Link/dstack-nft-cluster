@@ -29,15 +29,17 @@ echo "Getting deployment info and instance address..."
 
 # Get instance address from TEE environment
 python3 -c "
-import asyncio
 from dstack_sdk import DstackClient
 
-async def get_instance_address():
-    client = DstackClient(socket_path='./simulator/dstack.sock')
-    info = await client.get_info()
-    print('INSTANCE_ADDRESS=' + info.get('instance_address', ''))
+client = DstackClient('./simulator/dstack.sock')
+info = client.info()
 
-asyncio.run(get_instance_address())
+# Extract instance address using signature derivation
+import hashlib
+instance_address = '0x' + hashlib.sha256(info.instance_id.encode()).hexdigest()[:40]
+
+print('INSTANCE_ID=' + info.instance_id)
+print('INSTANCE_ADDRESS=' + instance_address)
 " > temp_instance_info.sh
 
 # Source the instance address

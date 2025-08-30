@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 class DStackP2PSDK:
     def __init__(self, contract_address: str, connection_url: str,
-                 rpc_url: str = "http://localhost:8545", dstack_socket: str = None):
+                 rpc_url: str = "http://localhost:8545", dstack_socket: str = "./simulator/dstack.sock"):
         """
         Ultra-simple P2P SDK interface.
         
@@ -47,7 +47,7 @@ class DStackP2PSDK:
         self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
         
         # Initialize DStack client
-        self.dstack = DstackClient(socket_path=dstack_socket)
+        self.dstack = DstackClient(dstack_socket)
         
         # Contract ABI (minimal for our needs)
         self.contract_abi = [
@@ -93,8 +93,8 @@ class DStackP2PSDK:
         """
         try:
             # Get instance info from DStack
-            info = await self.dstack.get_info()
-            self.instance_id = info.get('instance_id')
+            info = self.dstack.info()
+            self.instance_id = info.instance_id
             
             if not self.instance_id:
                 logger.error("Could not get instance ID from dstack")
@@ -103,26 +103,52 @@ class DStackP2PSDK:
             logger.info(f"Registering instance {self.instance_id} with URL: {self.connection_url}")
             
             # Generate signature proof for peer registration
-            sig_gen = SignatureProofGenerator(self.dstack)
+            sig_gen = SignatureProofGenerator(self.dstack_socket)
             
-            # Create signature for peer registration
-            derived_public_key = await sig_gen.get_derived_public_key()
-            message_data = f"{self.instance_id}:{derived_public_key.hex()}"
+            # Create signature proof using correct API
+            proof = sig_gen.generate_proof(self.instance_id, "ethereum/register", "ethereum")
             
-            app_signature = await sig_gen.sign_with_app_key(message_data)
-            kms_signature = await sig_gen.get_kms_signature_for_derived_key(derived_public_key)
+            derived_public_key = proof.derived_public_key
+            app_signature = proof.app_signature
+            kms_signature = proof.kms_signature
             
-            # Call registerPeer on contract
-            # Note: This would need a transaction sender - for now just log
-            logger.info(f"Would register peer with connection URL: {self.connection_url}")
+            # Actually call registerPeer on contract
+            logger.info(f"Calling registerPeer with connection URL: {self.connection_url}")
             logger.info(f"Instance ID: {self.instance_id}")
             logger.info(f"Derived public key: {derived_public_key.hex()}")
             logger.info(f"App signature: {app_signature.hex()}")
             logger.info(f"KMS signature: {kms_signature.hex()}")
             
-            # For demo purposes, mark as registered
-            self.registered = True
-            return True
+            # Get the default account (first account from anvil)
+            accounts = self.w3.eth.accounts
+            if not accounts:
+                logger.error("No accounts available for transaction")
+                return False
+                
+            # Use first account as transaction sender
+            tx_account = accounts[0]
+            logger.info(f"Using account {tx_account} for transaction")
+            
+            # Call registerPeer function
+            try:
+                tx_hash = self.contract.functions.registerPeer(
+                    self.instance_id,
+                    derived_public_key,
+                    app_signature,
+                    kms_signature,
+                    self.connection_url
+                ).transact({'from': tx_account})
+                
+                # Wait for transaction receipt
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+                logger.info(f"registerPeer transaction successful: {receipt.transactionHash.hex()}")
+                
+                self.registered = True
+                return True
+                
+            except Exception as e:
+                logger.error(f"registerPeer transaction failed: {e}")
+                return False
             
         except Exception as e:
             logger.error(f"Registration failed: {e}")
