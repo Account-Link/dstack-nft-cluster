@@ -14,11 +14,7 @@ from typing import List, Optional
 from dstack_sdk import DstackClient
 from signature_proof import SignatureProofGenerator
 
-try:
-    from web3 import Web3
-    from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware as geth_poa_middleware
-except ImportError:
-    pass
+from web3 import Web3
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +40,6 @@ class DStackP2PSDK:
         
         # Initialize Web3
         self.w3 = Web3(Web3.HTTPProvider(rpc_url))
-        self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
         
         # Initialize DStack client
         self.dstack = DstackClient(dstack_socket)
@@ -139,41 +134,56 @@ class DStackP2PSDK:
             logger.info(f"App ID: {app_id}")
             logger.info(f"App ID bytes32: {app_id_bytes32.hex()}")
             
-            # Get the default account (first account from anvil)
-            accounts = self.w3.eth.accounts
-            if not accounts:
-                logger.error("No accounts available for transaction")
-                return False
+            # Get transaction account from private key
+            import os
+            private_key = os.environ["PRIVATE_KEY"]  # Required
+            
+            from eth_account import Account
+            account = Account.from_key(private_key)
+            tx_account = account.address
+            logger.info(f"Using private key account {tx_account} for transaction")
+            
+            # Helper function to send transaction
+            def send_transaction(contract_function, description):
+                # Build and sign transaction with private key
+                tx = contract_function.build_transaction({
+                    'from': tx_account,
+                    'nonce': self.w3.eth.get_transaction_count(tx_account),
+                    'gas': 2000000,
+                    'gasPrice': self.w3.eth.gas_price,
+                })
+                signed_tx = account.sign_transaction(tx)
+                tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
                 
-            # Use first account as transaction sender
-            tx_account = accounts[0]
-            logger.info(f"Using account {tx_account} for transaction")
+                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+                logger.info(f"{description} transaction successful: {receipt.transactionHash.hex()}")
+                return receipt
             
             # First register the instance if not already registered
             try:
                 logger.info(f"Registering instance {self.instance_id}")
-                instance_tx = self.contract.functions.registerInstance(self.instance_id).transact({'from': tx_account})
-                instance_receipt = self.w3.eth.wait_for_transaction_receipt(instance_tx)
-                logger.info(f"registerInstance transaction successful: {instance_receipt.transactionHash.hex()}")
+                send_transaction(
+                    self.contract.functions.registerInstance(self.instance_id),
+                    "registerInstance"
+                )
             except Exception as e:
                 logger.warning(f"registerInstance failed (may already be registered): {e}")
             
             # Call registerPeer function
             try:
-                tx_hash = self.contract.functions.registerPeer(
-                    self.instance_id,
-                    derived_pubkey_sec1,  # derived public key (SEC1 compressed)
-                    app_pubkey_sec1,      # app public key (SEC1 compressed)
-                    app_signature,
-                    kms_signature,
-                    self.connection_url,
-                    "ethereum",           # purpose
-                    app_id_bytes32        # app ID as bytes32
-                ).transact({'from': tx_account})
-                
-                # Wait for transaction receipt
-                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-                logger.info(f"registerPeer transaction successful: {receipt.transactionHash.hex()}")
+                send_transaction(
+                    self.contract.functions.registerPeer(
+                        self.instance_id,
+                        derived_pubkey_sec1,  # derived public key (SEC1 compressed)
+                        app_pubkey_sec1,      # app public key (SEC1 compressed)
+                        app_signature,
+                        kms_signature,
+                        self.connection_url,
+                        "ethereum",           # purpose
+                        app_id_bytes32        # app ID as bytes32
+                    ),
+                    "registerPeer"
+                )
                 
                 self.registered = True
                 return True
@@ -227,11 +237,16 @@ class DStackP2PSDK:
                 await asyncio.sleep(10)
 
 async def demo_p2p_usage():
+    import os
     logging.basicConfig(level=logging.INFO)
     
-    # Production: sdk = DStackP2PSDK("0x123...", "https://abc123-443s.dstack-pha-prod7.phala.network")
-    # Dev/Testing: 
-    sdk = DStackP2PSDK("0x5067457698Fd6Fa1C6964e416b3f42713513B3dD", "http://localhost:8080")
+    # Use environment variables
+    contract_address = os.environ.get("CONTRACT_ADDRESS", "0x5067457698Fd6Fa1C6964e416b3f42713513B3dD")
+    connection_url = os.environ.get("CONNECTION_URL", "http://localhost:8080") 
+    rpc_url = os.environ.get("RPC_URL", "http://localhost:8545")
+    dstack_socket = os.environ.get("DSTACK_SOCKET", "./simulator/dstack.sock")
+    
+    sdk = DStackP2PSDK(contract_address, connection_url, rpc_url, dstack_socket)
     success = await sdk.register()
     
     if success:
