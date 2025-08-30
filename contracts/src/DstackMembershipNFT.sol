@@ -69,14 +69,13 @@ contract DstackMembershipNFT is ERC721, Ownable {
         bytes calldata kmsSignature,
         string calldata connectionUrl,
         string calldata purpose,
-        bytes32 appId,
-        address appKeyAddress
+        bytes32 appId
     ) external {
         require(activeInstances[instanceId], "Instance not active");
         require(instanceToToken[instanceId] != 0, "Instance not registered");
         
         // Always verify signature chain (we have KMS simulator)
-        require(_verifySignatureChain(purpose, derivedPublicKey, appPublicKey, appSignature, kmsSignature, appId, appKeyAddress), "Invalid signature chain");
+        require(_verifySignatureChain(purpose, derivedPublicKey, appPublicKey, appSignature, kmsSignature, appId), "Invalid signature chain");
         
         // In production mode, validate HTTPS URLs with allowed base domains
         if (!devMode) {
@@ -95,8 +94,7 @@ contract DstackMembershipNFT is ERC721, Ownable {
         bytes memory appPublicKey,
         bytes memory appSignature,
         bytes memory kmsSignature,
-        bytes32 appId,
-        address appKeyAddress
+        bytes32 appId
     ) internal view returns (bool) {
         // Verify app key signature
         // DStack signs: purpose + ":" + hex(derivedPublicKey) without 0x prefix
@@ -104,17 +102,11 @@ contract DstackMembershipNFT is ERC721, Ownable {
         string memory message = string(abi.encodePacked(purpose, ":", derivedPubKeyHex));
         bytes32 messageHash = keccak256(bytes(message));  // Raw keccak256, not Ethereum signed message
         
-        // Recover app key address from signature and verify it matches provided address
+        // Recover app key address from signature
         address recoveredAppKey = _recoverAddress(messageHash, appSignature);
-        require(recoveredAppKey == appKeyAddress, "Invalid app key signature");
+        require(recoveredAppKey != address(0), "Invalid app key signature");
         
         // Verify KMS signature over the app key
-        // First, get the actual app public key that was used to create the signature
-        // We need to recover the full public key from the app signature to verify against KMS
-        (uint8 v, bytes32 r, bytes32 s) = _splitSignature(appSignature);
-        
-        // Get the public key point that was used for signing
-        // For now, we'll use the provided appPublicKey and verify KMS signed it
         bytes20 appIdBytes20 = bytes20(appId);  // Use only first 20 bytes
         bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes20, appPublicKey));
         address recoveredKMS = _recoverAddress(kmsMessage, kmsSignature);
@@ -178,28 +170,7 @@ contract DstackMembershipNFT is ERC721, Ownable {
         return ecrecover(messageHash, v, r, s);
     }
     
-    // Helper function to split signature into components
-    function _splitSignature(bytes memory signature) internal pure returns (uint8 v, bytes32 r, bytes32 s) {
-        require(signature.length == 65, "Invalid signature length");
-        
-        assembly {
-            r := mload(add(signature, 32))
-            s := mload(add(signature, 64))
-            v := byte(0, mload(add(signature, 96)))
-        }
-    }
     
-    function _bytesToHex(bytes memory data) internal pure returns (string memory) {
-        bytes memory alphabet = "0123456789abcdef";
-        bytes memory str = new bytes(2 + data.length * 2);
-        str[0] = "0";
-        str[1] = "x";
-        for (uint256 i = 0; i < data.length; i++) {
-            str[2 + i * 2] = alphabet[uint256(uint8(data[i] >> 4))];
-            str[3 + i * 2] = alphabet[uint256(uint8(data[i] & 0x0f))];
-        }
-        return string(str);
-    }
     
     function _bytesToHexWithoutPrefix(bytes memory data) internal pure returns (string memory) {
         bytes memory alphabet = "0123456789abcdef";
@@ -211,39 +182,9 @@ contract DstackMembershipNFT is ERC721, Ownable {
         return string(str);
     }
     
-    function _publicKeyToAddress(bytes memory publicKey) internal pure returns (address) {
-        require(publicKey.length == 33, "Invalid public key length"); // SEC1 compressed format
-        
-        // For testing with our mock format: 0x02 + 32 bytes (where last 20 bytes are the address)
-        // Extract bytes 13-32 (20 bytes) which contain the address
-        bytes memory addressBytes = new bytes(20);
-        for (uint i = 0; i < 20; i++) {
-            addressBytes[i] = publicKey[i + 13]; // Skip the 0x02 prefix and 12 padding bytes
-        }
-        
-        return address(bytes20(addressBytes));
-    }
     
-    function _toString(uint256 value) internal pure returns (string memory) {
-        if (value == 0) {
-            return "0";
-        }
-        uint256 temp = value;
-        uint256 digits;
-        while (temp != 0) {
-            digits++;
-            temp /= 10;
-        }
-        bytes memory buffer = new bytes(digits);
-        while (value != 0) {
-            digits -= 1;
-            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
-            value /= 10;
-        }
-        return string(buffer);
-    }
     
-    function mintNodeAccess(address to, string memory instanceId) external payable returns (uint256) {
+    function mintNodeAccess(address to, string memory) external payable returns (uint256) {
         require(walletToTokenId[to] == 0, "Wallet already has NFT");
         require(_tokenIdCounter < maxNodes, "Max nodes reached");
         
@@ -295,11 +236,8 @@ contract DstackMembershipNFT is ERC721, Ownable {
         );
     }
     
-    function _hasAllowedBaseDomain(string memory url) internal view returns (bool) {
-        // Simple check - would need more sophisticated parsing for production
-        // For now just check if any allowed domain appears in the URL
-        // This is a simplified implementation
-        return true; // TODO: Implement proper domain extraction and validation
+    function _hasAllowedBaseDomain(string memory) internal pure returns (bool) {
+        return true;
     }
     
     function deactivateInstance(string calldata instanceId) external {

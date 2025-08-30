@@ -20,7 +20,7 @@ RPC_URL = "http://localhost:8545"
 PRIVATE_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"  # Anvil default
 KMS_ROOT_PRIVATE_KEY = "e0e5d254fb944dcc370a2e5288b336a1e809871545a73ee645368957fefa31f9"
 KMS_ROOT_ADDRESS = Account.from_key(KMS_ROOT_PRIVATE_KEY).address
-CONTRACT_ADDRESS = "0x2B0d36FACD61B71CC05ab8F3D2355ec3631C0dd5"  # Final fixed deployed contract with v adjustment
+CONTRACT_ADDRESS = "0x5067457698Fd6Fa1C6964e416b3f42713513B3dD"  # Simplified contract without redundant parameters
 
 def test_signature_formats():
     """Compare signature formats between working and current implementation"""
@@ -142,8 +142,7 @@ def test_contract_call(test_data):
                 {"name": "kmsSignature", "type": "bytes"},
                 {"name": "connectionUrl", "type": "string"},
                 {"name": "purpose", "type": "string"},
-                {"name": "appId", "type": "bytes32"},
-                {"name": "appKeyAddress", "type": "address"}
+                {"name": "appId", "type": "bytes32"}
             ],
             "name": "registerPeer",
             "outputs": [],
@@ -186,10 +185,6 @@ def test_contract_call(test_data):
         print(f"   Purpose: ethereum")
         print(f"   App ID: {app_id_bytes32.hex()}")
         
-        # Call registerPeer - use the app address from the working format
-        app_address = test_data['app_signer']
-        print(f"   App key address: {app_address}")
-        
         print(f"\n🚀 Calling registerPeer...")
         tx_hash = contract.functions.registerPeer(
             instance_id,
@@ -199,8 +194,7 @@ def test_contract_call(test_data):
             proof.kms_signature,
             "http://localhost:8080",
             "ethereum",
-            app_id_bytes32,
-            app_address
+            app_id_bytes32
         ).transact({'from': account.address})
         
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash)

@@ -77,7 +77,7 @@ contract DstackMembershipNFTTest is Test {
         // Test dev mode - allows any URL
         bytes32 appId = keccak256("test-app-id");
         bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(signer)))); // Mock SEC1 compressed pubkey
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://localhost:8080", "ethereum", appId, signer);
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://localhost:8080", "ethereum", appId);
         
         assertEq(nft.instanceToConnectionUrl(INSTANCE_1), "http://localhost:8080");
     }
@@ -98,7 +98,7 @@ contract DstackMembershipNFTTest is Test {
         
         bytes32 appId = keccak256("test-app-id");
         bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(signer)))); // Mock SEC1 compressed pubkey
-        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080", "ethereum", appId, signer);
+        nft.registerPeer(INSTANCE_1, derivedPubKey, appPubKey, appSignature, kmsSignature, "http://10.0.1.1:8080", "ethereum", appId);
         
         string[] memory endpoints = nft.getPeerEndpoints();
         assertEq(endpoints.length, 1);
@@ -106,7 +106,7 @@ contract DstackMembershipNFTTest is Test {
     }
     
     // Helper functions
-    function _createPeerSignature(uint256 privateKey, string memory instanceId, bytes memory derivedPubKey) internal pure returns (bytes memory) {
+    function _createPeerSignature(uint256 privateKey, string memory, bytes memory derivedPubKey) internal pure returns (bytes memory) {
         // DStack message format: purpose + ":" + hex(derivedPublicKey) without 0x prefix
         string memory derivedHex = _bytesToHexWithoutPrefix(derivedPubKey);
         string memory message = string(abi.encodePacked("ethereum:", derivedHex));
@@ -117,13 +117,13 @@ contract DstackMembershipNFTTest is Test {
         return abi.encodePacked(r, s, v);
     }
     
-    function _createKmsSignature(string memory instanceId, address appKeyAddr) internal pure returns (bytes memory) {
-        // KMS message format: "dstack-kms-issued:" + appId_bytes + appPublicKey_sec1
+    function _createKmsSignature(string memory, address appKeyAddr) internal pure returns (bytes memory) {
+        // KMS message format: "dstack-kms-issued:" + appId_bytes20 + appPublicKey_sec1
         bytes32 appId = keccak256("test-app-id");
-        bytes memory appIdBytes = abi.encodePacked(appId);
+        bytes20 appIdBytes20 = bytes20(appId);  // Use only first 20 bytes like the contract
         bytes memory appPubKey = abi.encodePacked(bytes1(0x02), bytes32(uint256(uint160(appKeyAddr)))); // Mock SEC1 compressed pubkey
         
-        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes, appPubKey));
+        bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes20, appPubKey));
         // Use the known KMS private key
         uint256 kmsPrivateKey = 0x1234567890123456789012345678901234567890123456789012345678901235;
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(kmsPrivateKey, kmsMessage);
