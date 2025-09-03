@@ -41,9 +41,17 @@ KMS Root → App Key → Derived Key → Node Operations
 
 ### Prerequisites
 
-- Python 3.8+ with web3, eth-account, eth-keys packages
+- Python 3.10+ (required by dependencies)
+- [uv](https://github.com/astral-sh/uv) for Python package management
 - Anvil (from Foundry) for local blockchain
 - DStack simulator for signature generation
+
+### Install uv
+
+```bash
+# Install uv (Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 ### 1. Environment Setup
 
@@ -69,10 +77,10 @@ forge script script/DeployDstackMembershipNFT.s.sol --rpc-url http://localhost:8
 
 ```bash
 # Test the complete signature verification and registration flow
-python3 scripts/test_contract_signature_verification.py
+uv run python scripts/test_contract_signature_verification.py
 
 # Or run the P2P SDK demo
-python3 dstack_cluster.py
+uv run python dstack_cluster.py
 ```
 
 ### 4. Expected Output
@@ -111,6 +119,24 @@ dstack-nft-cluster/
 - **`signature_proof.py`**: DStack simulator integration utilities
 
 ## 🔧 Development
+
+### Dependency Management
+
+This project uses `uv` for fast, reliable Python dependency management. Dependencies are defined in `pyproject.toml` and locked in `uv.lock`.
+
+```bash
+# Install all dependencies (automatically creates virtual environment)
+uv sync
+
+# Run Python commands with uv
+uv run python dstack_cluster.py
+
+# Add new dependencies
+uv add package-name
+
+# Update dependencies
+uv lock --upgrade
+```
 
 ### P2P SDK Usage
 
@@ -181,7 +207,7 @@ bytes32 kmsMessage = keccak256(abi.encodePacked("dstack-kms-issued:", appIdBytes
 
 ```bash
 # Comprehensive signature format testing
-python3 scripts/test_contract_signature_verification.py
+uv run python scripts/test_contract_signature_verification.py
 ```
 
 Expected output:
@@ -196,7 +222,7 @@ Expected output:
 
 ```bash
 # Test complete P2P registration flow
-python3 dstack_cluster.py
+uv run python dstack_cluster.py
 ```
 
 Expected output:
@@ -277,4 +303,4 @@ This project demonstrates key cryptographic and distributed systems concepts:
 
 **Ready to build NFT-gated P2P clusters?** 🚀
 
-Start with `python3 dstack_cluster.py` and experience complete signature verification in action!
+Start with `uv run python dstack_cluster.py` and experience complete signature verification in action!

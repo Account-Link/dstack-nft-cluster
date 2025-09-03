@@ -14,7 +14,7 @@ The system consists of:
 
 1. **Foundry/Anvil**: Local blockchain running on `http://localhost:8545`
 2. **DStack Simulator**: Running in `./simulator/` directory
-3. **Python Virtual Environment**: `venv310/` with required packages
+3. **uv**: Python package manager (replaces traditional virtual environments)
 4. **Smart Contract**: Deployed NFT membership contract
 
 ## Architecture

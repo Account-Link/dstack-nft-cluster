@@ -17,9 +17,9 @@ if [ ! -S "./simulator/dstack.sock" ]; then
     exit 1
 fi
 
-if [ ! -f "./venv310/bin/activate" ]; then
-    echo "ERROR: Python virtual environment not found at ./venv310"
-    echo "Please set up the virtual environment first"
+if ! command -v uv &> /dev/null; then
+    echo "ERROR: uv not found. Please install uv first:"
+    echo "curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
 fi
 
