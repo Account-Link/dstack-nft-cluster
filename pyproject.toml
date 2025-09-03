@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dstack-nft-cluster"
+version = "0.1.0"
+description = "DStack P2P Cluster SDK with NFT membership"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "web3==6.11.0",
+    "eth-account==0.9.0",
+    "eth-keys==0.4.0",
+    "eth-utils==2.3.0",
+    "requests==2.31.0",
+    "asyncio-mqtt==0.13.0",
+    "dstack-sdk",
+    "setuptools",
+]
+
+[project.scripts]
+dstack-cluster = "dstack_cluster:demo_p2p_usage"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+
+[tool.uv]
+dev-dependencies = []
+
+[project.optional-dependencies]
+dev = []

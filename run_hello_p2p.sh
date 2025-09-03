@@ -14,9 +14,8 @@ echo "=== Running Hello P2P Instance: $INSTANCE_ID on port $PORT ==="
 echo "Contract: $CONTRACT_ADDRESS"
 echo "RPC URL: $RPC_URL"
 
-# Activate virtual environment
-echo "Activating virtual environment..."
-source venv310/bin/activate
+# Using uv for dependency management
+echo "Using uv for Python environment..."
 
 # Check if simulator is running
 if [ ! -S "./simulator/dstack.sock" ]; then
@@ -28,7 +27,7 @@ fi
 echo "Getting deployment info and instance address..."
 
 # Get instance address from TEE environment
-python3 -c "
+uv run python -c "
 from dstack_sdk import DstackClient
 
 client = DstackClient('./simulator/dstack.sock')
@@ -86,6 +85,6 @@ echo "Stop with: pkill -f \"hello_p2p.py.*$INSTANCE_ID\""
 echo ""
 
 # Run the Hello P2P application (ultra-simple interface!)
-python3 hello_p2p.py "$CONTRACT_ADDRESS" \
+uv run python hello_p2p.py "$CONTRACT_ADDRESS" \
     --port "$PORT" \
     --verbose 2>&1 | tee "hello_${INSTANCE_ID}.log"
