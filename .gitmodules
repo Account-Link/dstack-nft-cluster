@@ -1,0 +1,7 @@
+[submodule "refs/dstack"]
+	path = refs/dstack
+	url = https://github.com/Dstack-TEE/dstack.git
+[submodule "refs/p2p-wg"]
+	path = refs/p2p-wg
+	url = https://github.com/amiller/dstack-examples.git
+	branch = holepunch

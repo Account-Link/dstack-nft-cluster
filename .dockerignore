@@ -1,0 +1,56 @@
+# Git and version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+.env
+
+# Virtual environments (legacy)
+venv310/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (keep README.md for package build)
+notes/
+docs/
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Contracts and blockchain
+contracts/
+foundry.toml
+
+# Scripts (unless needed)
+scripts/
+run_*.sh
+test_*.sh
+
+# Logs
+*.log

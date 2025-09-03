@@ -2,14 +2,20 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies and uv
 RUN apt-get update && apt-get install -y \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
-# Copy requirements first for better layer caching
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy project configuration files first for better layer caching
+COPY pyproject.toml uv.lock README.md ./
+
+# Install dependencies using uv
+RUN uv sync --frozen --no-dev
 
 # Copy application files
 COPY dstack_cluster.py .
@@ -24,5 +30,5 @@ ENV DSTACK_SOCKET="/app/simulator/dstack.sock"
 # Create directory for dstack socket if needed
 RUN mkdir -p /app/simulator
 
-# Default command runs the demo
-CMD ["python3", "dstack_cluster.py"]
+# Default command runs the demo using uv
+CMD ["uv", "run", "python", "dstack_cluster.py"]
