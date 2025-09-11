@@ -2,10 +2,10 @@ services:
   dstack-node:
     build: .
     environment:
-      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-0x2B0d36FACD61B71CC05ab8F3D2355ec3631C0dd5}
-      - CONNECTION_URL=${CONNECTION_URL:-http://dstack-node:8080}
-      - RPC_URL=${RPC_URL:-http://172.17.0.1:8545}
-      - DSTACK_SOCKET=${DSTACK_SOCKET:-/app/simulator/dstack.sock}
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3}
+      - CONNECTION_URL=${CONNECTION_URL:-https://dstack-node.phala.network}
+      - RPC_URL=${RPC_URL:-https://base.llamarpc.com}
+      - DSTACK_SOCKET=${DSTACK_SOCKET:-/var/run/dstack.sock}
       - PRIVATE_KEY=${PRIVATE_KEY}
     volumes:
       - ./simulator/dstack.sock:/app/simulator/dstack.sock
