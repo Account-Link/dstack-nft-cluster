@@ -242,22 +242,80 @@ async def demo_p2p_usage():
     
     # Use environment variables
     contract_address = os.environ.get("CONTRACT_ADDRESS", "0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3")
-    connection_url = os.environ.get("CONNECTION_URL", "http://localhost:8080") 
+    connection_url = os.environ.get("CONNECTION_URL", "https://dstack-node.phala.network")
     rpc_url = os.environ.get("RPC_URL", "https://base.llamarpc.com")
-    dstack_socket = os.environ.get("DSTACK_SOCKET", "./simulator/dstack.sock")
     
-    sdk = DStackP2PSDK(contract_address, connection_url, rpc_url, dstack_socket)
-    success = await sdk.register()
+    # Smart socket detection for different environments
+    # Try different socket paths in order of preference
+    socket_paths = [
+        "/var/run/dstack.sock",          # Phala Cloud production
+        "./simulator/dstack.sock",       # Local development
+        "/app/simulator/dstack.sock",    # Docker container
+        "/tmp/dstack.sock"               # Alternative location
+    ]
     
-    if success:
-        peers = await sdk.get_peers()
-        logger.info(f"Connected to cluster with peers: {peers}")
+    for path in socket_paths:
+        if os.path.exists(path):
+            dstack_socket = path
+            logger.info(f"Found DStack socket at: {path}")
+            break
+    
+    if not dstack_socket:
+        logger.error("No DStack socket found. Tried paths:")
+        for path in socket_paths:
+            logger.error(f"  - {path} (not found)")
+        dstack_socket = "/var/run/dstack.sock"  # Default fallback
+    
+    logger.info(f"Initializing DStack P2P SDK...")
+    logger.info(f"Contract: {contract_address}")
+    logger.info(f"Connection URL: {connection_url}")
+    logger.info(f"RPC URL: {rpc_url}")
+    logger.info(f"DStack Socket: {dstack_socket}")
+    
+    # Wait for DStack agent to be ready (Phala Cloud startup timing)
+    import time
+    max_retries = 30
+    for attempt in range(max_retries):
+        try:
+            # Test DStack connection first
+            from dstack_sdk import DstackClient
+            test_client = DstackClient(dstack_socket)
+            test_client.info()  # This will fail if agent not ready
+            logger.info(f"DStack agent ready after {attempt + 1} attempts")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.info(f"DStack agent not ready (attempt {attempt + 1}/{max_retries}), waiting...")
+                time.sleep(2)
+            else:
+                logger.error(f"DStack agent never became ready: {e}")
+                return
+    
+    try:
+        sdk = DStackP2PSDK(contract_address, connection_url, rpc_url, dstack_socket)
+        success = await sdk.register()
         
-        # Example of using peers for application connectivity
-        for peer in peers:
-            logger.info(f"Could connect to: {peer}")
-    else:
-        logger.error("Failed to register with cluster")
+        if success:
+            peers = await sdk.get_peers()
+            logger.info(f"Connected to cluster with peers: {peers}")
+            
+            # Example of using peers for application connectivity
+            for peer in peers:
+                logger.info(f"Could connect to: {peer}")
+        else:
+            logger.error("Failed to register with cluster")
+            
+    except ConnectionRefusedError:
+        logger.error("Could not connect to DStack socket - check if DStack agent is running")
+        logger.error(f"Tried socket path: {dstack_socket}")
+        logger.error("On Phala Cloud, ensure volume mount: /var/run/dstack.sock:/var/run/dstack.sock")
+    except FileNotFoundError:
+        logger.error(f"DStack socket not found at: {dstack_socket}")
+        logger.error("Check if DStack agent is properly installed and running")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     asyncio.run(demo_p2p_usage())

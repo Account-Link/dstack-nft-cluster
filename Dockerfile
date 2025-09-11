@@ -1,4 +1,5 @@
-FROM python:3.11-slim
+# Use multi-platform base image
+FROM --platform=$TARGETPLATFORM python:3.11-slim
 
 WORKDIR /app
 
