@@ -241,9 +241,9 @@ async def demo_p2p_usage():
     logging.basicConfig(level=logging.INFO)
     
     # Use environment variables
-    contract_address = os.environ.get("CONTRACT_ADDRESS", "0x5067457698Fd6Fa1C6964e416b3f42713513B3dD")
+    contract_address = os.environ.get("CONTRACT_ADDRESS", "0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3")
     connection_url = os.environ.get("CONNECTION_URL", "http://localhost:8080") 
-    rpc_url = os.environ.get("RPC_URL", "http://localhost:8545")
+    rpc_url = os.environ.get("RPC_URL", "https://base.llamarpc.com")
     dstack_socket = os.environ.get("DSTACK_SOCKET", "./simulator/dstack.sock")
     
     sdk = DStackP2PSDK(contract_address, connection_url, rpc_url, dstack_socket)

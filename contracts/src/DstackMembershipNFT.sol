@@ -29,7 +29,7 @@ contract DstackMembershipNFT is ERC721, Ownable {
     mapping(string => bool) public allowedBaseDomains;
     
     // KMS root address for signature verification
-    address public immutable kmsRootAddress;
+    address public kmsRootAddress;
     
     // Events
     event InstanceRegistered(string indexed instanceId, uint256 indexed tokenId);
@@ -38,6 +38,7 @@ contract DstackMembershipNFT is ERC721, Ownable {
     event ClusterConfigUpdated(uint256 maxNodes, bool publicMinting, uint256 mintPrice);
     event BaseDomainAdded(string indexed baseDomain);
     event BaseDomainRemoved(string indexed baseDomain);
+    event KmsRootAddressUpdated(address indexed oldAddress, address indexed newAddress);
     
     constructor(address _kmsRootAddress) ERC721("DStack Cluster NFT", "DSTACK") Ownable(msg.sender) {
         kmsRootAddress = _kmsRootAddress;
@@ -217,6 +218,13 @@ contract DstackMembershipNFT is ERC721, Ownable {
     function addBaseDomain(string calldata baseDomain) external onlyOwner {
         allowedBaseDomains[baseDomain] = true;
         emit BaseDomainAdded(baseDomain);
+    }
+    
+    function setKmsRootAddress(address _kmsRootAddress) external onlyOwner {
+        require(_kmsRootAddress != address(0), "Invalid KMS root address");
+        address oldAddress = kmsRootAddress;
+        kmsRootAddress = _kmsRootAddress;
+        emit KmsRootAddressUpdated(oldAddress, _kmsRootAddress);
     }
     
     function _isValidHttpsUrl(string memory url) internal pure returns (bool) {
