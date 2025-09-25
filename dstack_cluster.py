@@ -249,8 +249,8 @@ async def demo_p2p_usage():
     # Try different socket paths in order of preference
     socket_paths = [
         "/var/run/dstack.sock",          # Phala Cloud production
-        "./simulator/dstack.sock",       # Local development
-        "/app/simulator/dstack.sock",    # Docker container
+        "./simulator/dstack.sock",       # Local development node1
+        "/app/simulator/dstack.sock",    # Docker container node1
         "/tmp/dstack.sock"               # Alternative location
     ]
     

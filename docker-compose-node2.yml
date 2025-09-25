@@ -1,0 +1,23 @@
+services:
+  dstack-node2:
+    build: 
+      context: .
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    platform: linux/amd64
+    environment:
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3}
+      - CONNECTION_URL=${NODE2_CONNECTION_URL:-http://localhost:8082}
+      - RPC_URL=${RPC_URL:-https://base.llamarpc.com}
+      - DSTACK_SOCKET=/app/simulator2/dstack.sock
+      - PRIVATE_KEY=${PRIVATE_KEY}
+      - NODE_NAME=node2
+    volumes:
+      # Use separate simulator directory for node2
+      - ./simulator2:/app/simulator2
+    ports:
+      - "8082:8080"
+    # Add restart policy for production
+    restart: unless-stopped
+    container_name: dstack-node2

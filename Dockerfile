@@ -28,8 +28,8 @@ ENV CONNECTION_URL="http://localhost:8080"
 ENV RPC_URL="http://host.docker.internal:8545"
 ENV DSTACK_SOCKET="/app/simulator/dstack.sock"
 
-# Create directory for dstack socket if needed
-RUN mkdir -p /app/simulator
+# Create directories for dstack sockets if needed
+RUN mkdir -p /app/simulator /app/simulator2
 
 # Default command runs the demo using uv
 CMD ["uv", "run", "python", "dstack_cluster.py"]
