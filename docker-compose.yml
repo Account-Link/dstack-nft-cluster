@@ -7,7 +7,7 @@ services:
         - linux/arm64
     platform: linux/amd64
     environment:
-      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3}
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-0x33e081c002288F3301f48a5237D6b7e8703C39a3}
       - CONNECTION_URL=${CONNECTION_URL:-https://dstack-node.phala.network}
       - RPC_URL=${RPC_URL:-https://base.llamarpc.com}
       - DSTACK_SOCKET=${DSTACK_SOCKET:-/var/run/dstack.sock}

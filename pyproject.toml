@@ -17,10 +17,13 @@ dependencies = [
     "asyncio-mqtt==0.13.0",
     "dstack-sdk",
     "setuptools",
+    "fastapi==0.104.1",
+    "uvicorn[standard]==0.24.0",
 ]
 
 [project.scripts]
 dstack-cluster = "dstack_cluster:demo_p2p_usage"
+dstack-fastapi = "fastapi_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]

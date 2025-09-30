@@ -72,6 +72,61 @@ class DStackP2PSDK:
                 "name": "getPeerEndpoints",
                 "outputs": [{"name": "", "type": "string[]"}],
                 "type": "function"
+            },
+            {
+                "inputs": [
+                    {"name": "to", "type": "address"},
+                    {"name": "", "type": "string"}
+                ],
+                "name": "mintNodeAccess",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "payable"
+            },
+            {
+                "inputs": [{"name": "", "type": "address"}],
+                "name": "walletToTokenId",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "owner",
+                "outputs": [{"name": "", "type": "address"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "publicMinting",
+                "outputs": [{"name": "", "type": "bool"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "mintPrice",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "maxNodes",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [
+                    {"name": "_maxNodes", "type": "uint256"},
+                    {"name": "_publicMinting", "type": "bool"},
+                    {"name": "_mintPrice", "type": "uint256"}
+                ],
+                "name": "setClusterConfig",
+                "outputs": [],
+                "type": "function"
             }
         ]
         
@@ -241,7 +296,7 @@ async def demo_p2p_usage():
     logging.basicConfig(level=logging.INFO)
     
     # Use environment variables
-    contract_address = os.environ.get("CONTRACT_ADDRESS", "0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3")
+    contract_address = os.environ.get("CONTRACT_ADDRESS", "0x33e081c002288F3301f48a5237D6b7e8703C39a3")
     connection_url = os.environ.get("CONNECTION_URL", "https://dstack-node.phala.network")
     rpc_url = os.environ.get("RPC_URL", "https://base.llamarpc.com")
     

@@ -72,7 +72,7 @@ forge script script/DeployDstackMembershipNFT.s.sol --rpc-url http://localhost:8
 ```
 
 **Current Deployed Contract (Local/Anvil)**: `0x5FbDB2315678afecb367f032d93F642f64180aa3`
-**Latest Mainnet Contract (Base)**: `0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3` [🔗 View on Basescan](https://basescan.org/address/0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3) ✅ **Working**
+**Latest Mainnet Contract (Base)**: `0x33e081c002288F3301f48a5237D6b7e8703C39a3` [🔗 View on Basescan](https://basescan.org/address/0x33e081c002288F3301f48a5237D6b7e8703C39a3) ✅ **Working**
 **Previous Contract**: `0x29e984e397066efA824e8991F6a101821C393faa` (deprecated)
 
 ### 3. Test P2P Registration
@@ -284,8 +284,9 @@ This project demonstrates key cryptographic and distributed systems concepts:
 
 #### Production (Base Mainnet) - Latest
 - **Contract Address**: `0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3` 
+- **New Contract Address as of 09/30/2025**: `0x33e081c002288F3301f48a5237D6b7e8703C39a3`
 - **KMS Root Address**: `0x8f2cF602C9695b23130367ed78d8F557554de7C5` ✅ (verified working)
-- **Verification**: [🔗 View on Basescan](https://basescan.org/address/0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3)
+- **Verification**: [🔗 View on Basescan](https://basescan.org/address/0x33e081c002288F3301f48a5237D6b7e8703C39a3)
 - **Network**: Base Mainnet (Chain ID: 8453)
 - **Owner**: `0xE2B6F88dcC3c95f1b0c0682eaa2EFa03E1F2D6f7` (can mint NFTs & update KMS root)
 - **Features**: ✅ Updatable KMS root address, ✅ Full signature verification working
