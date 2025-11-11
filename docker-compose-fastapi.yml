@@ -1,0 +1,55 @@
+services:
+  dstack-fastapi-server:
+    build: 
+      context: .
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    platform: linux/amd64
+    environment:
+      # DStack P2P Configuration
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS:-0x33e081c002288F3301f48a5237D6b7e8703C39a3}
+      - CONNECTION_URL=${CONNECTION_URL:-http://localhost:8080}
+      - RPC_URL=${RPC_URL:-https://base.llamarpc.com}
+      - DSTACK_SOCKET=${DSTACK_SOCKET:-/var/run/dstack.sock}
+      - PRIVATE_KEY=${PRIVATE_KEY}
+      
+      # FastAPI Server Configuration
+      - HOST=0.0.0.0
+      - PORT=8080
+    volumes:
+      # Mount DStack socket from host (Phala Cloud provides this)
+      - /var/run/dstack.sock:/var/run/dstack.sock
+      # Keep local simulator mount for development
+      - ./simulator/dstack.sock:/app/simulator/dstack.sock
+    ports:
+      - "${API_PORT:-8080}:8080"
+    # Add restart policy for production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dstack-api.rule=Host(`${API_HOST:-api.localhost}`)"
+      - "traefik.http.routers.dstack-api.entrypoints=web"
+      - "traefik.http.services.dstack-api.loadbalancer.server.port=8080"
+
+  # Optional: Add a reverse proxy for production deployments
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8081:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    profiles:
+      - "proxy"

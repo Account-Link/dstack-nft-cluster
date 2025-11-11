@@ -72,6 +72,61 @@ class DStackP2PSDK:
                 "name": "getPeerEndpoints",
                 "outputs": [{"name": "", "type": "string[]"}],
                 "type": "function"
+            },
+            {
+                "inputs": [
+                    {"name": "to", "type": "address"},
+                    {"name": "", "type": "string"}
+                ],
+                "name": "mintNodeAccess",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "payable"
+            },
+            {
+                "inputs": [{"name": "", "type": "address"}],
+                "name": "walletToTokenId",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "owner",
+                "outputs": [{"name": "", "type": "address"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "publicMinting",
+                "outputs": [{"name": "", "type": "bool"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "mintPrice",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [],
+                "name": "maxNodes",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "type": "function",
+                "stateMutability": "view"
+            },
+            {
+                "inputs": [
+                    {"name": "_maxNodes", "type": "uint256"},
+                    {"name": "_publicMinting", "type": "bool"},
+                    {"name": "_mintPrice", "type": "uint256"}
+                ],
+                "name": "setClusterConfig",
+                "outputs": [],
+                "type": "function"
             }
         ]
         
@@ -82,11 +137,50 @@ class DStackP2PSDK:
         
         self.instance_id = None
         self.registered = False
-        
+
     async def register(self) -> bool:
         """
-        Register this instance with the peer network.
-        Auto-detects everything from TEE environment.
+        Register the instance and peer with the peer network.
+        This function is called to register the instance and peer.
+        Returns: Success boolean
+        """
+        try:
+            await self.register_instance()
+            await self.register_peer()
+            return True
+        except Exception as e:
+            logger.error(f"Registration failed: {e}")
+            return False
+
+    # Helper function to send transaction
+    def send_transaction(self, contract_function, description):
+        # Get transaction account from private key
+        import os
+        private_key = os.environ["PRIVATE_KEY"]  # Required
+        
+        from eth_account import Account
+        account = Account.from_key(private_key)
+        tx_account = account.address
+        logger.info(f"Using private key account {tx_account} for transaction")
+
+        # Build and sign transaction with private key
+        tx = contract_function.build_transaction({
+            'from': tx_account,
+            'nonce': self.w3.eth.get_transaction_count(tx_account),
+            'gas': 2000000,
+            'gasPrice': self.w3.eth.gas_price,
+        })
+        signed_tx = account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+        logger.info(f"{description} transaction successful: {receipt.transactionHash.hex()}")
+        return receipt
+
+    async def register_instance(self) -> bool:
+        """
+        Register the instance with the peer network.
+        This function is called before the peer is registered.
         Returns: Success boolean
         """
         try:
@@ -97,7 +191,26 @@ class DStackP2PSDK:
             if not self.instance_id:
                 logger.error("Could not get instance ID from dstack")
                 return False
-                
+
+            logger.info(f"Registering instance {self.instance_id}")
+            self.send_transaction(
+                self.contract.functions.registerInstance(self.instance_id),
+                "registerInstance"
+            )
+        except Exception as e:
+            logger.warning(f"registerInstance failed (may already be registered): {e}")
+            return False
+        return True
+
+        
+    async def register_peer(self) -> bool:
+        """
+        Register with the peer network.
+        This function is called after the instance is registered.
+        Auto-detects everything from TEE environment.
+        Returns: Success boolean
+        """
+        try:
             logger.info(f"Registering instance {self.instance_id} with URL: {self.connection_url}")
             
             # Generate signature proof for peer registration
@@ -113,7 +226,7 @@ class DStackP2PSDK:
             # Get app public key from signature verification
             from eth_keys import keys
             from eth_utils import keccak
-            from eth_account import Account
+            
             derived_pubkey_sec1 = keys.PrivateKey(proof.derived_private_key).public_key.to_compressed_bytes()
             app_message = f"ethereum:{derived_pubkey_sec1.hex()}"
             app_message_hash = keccak(bytes(app_message, 'utf-8'))  # Use raw keccak256 like the contract
@@ -134,44 +247,9 @@ class DStackP2PSDK:
             logger.info(f"App ID: {app_id}")
             logger.info(f"App ID bytes32: {app_id_bytes32.hex()}")
             
-            # Get transaction account from private key
-            import os
-            private_key = os.environ["PRIVATE_KEY"]  # Required
-            
-            from eth_account import Account
-            account = Account.from_key(private_key)
-            tx_account = account.address
-            logger.info(f"Using private key account {tx_account} for transaction")
-            
-            # Helper function to send transaction
-            def send_transaction(contract_function, description):
-                # Build and sign transaction with private key
-                tx = contract_function.build_transaction({
-                    'from': tx_account,
-                    'nonce': self.w3.eth.get_transaction_count(tx_account),
-                    'gas': 2000000,
-                    'gasPrice': self.w3.eth.gas_price,
-                })
-                signed_tx = account.sign_transaction(tx)
-                tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-                
-                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-                logger.info(f"{description} transaction successful: {receipt.transactionHash.hex()}")
-                return receipt
-            
-            # First register the instance if not already registered
-            try:
-                logger.info(f"Registering instance {self.instance_id}")
-                send_transaction(
-                    self.contract.functions.registerInstance(self.instance_id),
-                    "registerInstance"
-                )
-            except Exception as e:
-                logger.warning(f"registerInstance failed (may already be registered): {e}")
-            
             # Call registerPeer function
             try:
-                send_transaction(
+                self.send_transaction(
                     self.contract.functions.registerPeer(
                         self.instance_id,
                         derived_pubkey_sec1,  # derived public key (SEC1 compressed)
@@ -241,7 +319,7 @@ async def demo_p2p_usage():
     logging.basicConfig(level=logging.INFO)
     
     # Use environment variables
-    contract_address = os.environ.get("CONTRACT_ADDRESS", "0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3")
+    contract_address = os.environ.get("CONTRACT_ADDRESS", "0x33e081c002288F3301f48a5237D6b7e8703C39a3")
     connection_url = os.environ.get("CONNECTION_URL", "https://dstack-node.phala.network")
     rpc_url = os.environ.get("RPC_URL", "https://base.llamarpc.com")
     

@@ -21,7 +21,7 @@ contract DeployDstackMembershipNFTMainnet is Script {
         // Verify deployer has sufficient balance
         uint256 balance = deployer.balance;
         console.log("Deployer balance:", balance / 1e18, "ETH");
-        require(balance > 0.01 ether, "Insufficient ETH for deployment");
+        // require(balance > 0.01 ether, "Insufficient ETH for deployment");
         
         vm.startBroadcast(deployerPrivateKey);
         
@@ -36,15 +36,15 @@ contract DeployDstackMembershipNFTMainnet is Script {
         console.log("Cluster configuration set: maxNodes=1000, publicMinting=false, mintPrice=0");
         
         // Disable dev mode for production
-        nft.setDevMode(false);
-        console.log("Dev mode disabled for production");
+        // nft.setDevMode(false);
+        // console.log("Dev mode disabled for production");
         
         // Add allowed base domains for production URLs
         // You can modify these based on your actual domains
         string[] memory allowedDomains = new string[](3);
         allowedDomains[0] = "dstack.network";
         allowedDomains[1] = "phala.network"; 
-        allowedDomains[2] = "your-domain.com";
+        // allowedDomains[2] = "your-domain.com";
         
         for (uint i = 0; i < allowedDomains.length; i++) {
             nft.addBaseDomain(allowedDomains[i]);

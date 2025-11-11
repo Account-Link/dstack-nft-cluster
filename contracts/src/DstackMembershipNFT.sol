@@ -186,7 +186,6 @@ contract DstackMembershipNFT is ERC721, Ownable {
     
     
     function mintNodeAccess(address to, string memory) external payable returns (uint256) {
-        require(walletToTokenId[to] == 0, "Wallet already has NFT");
         require(_tokenIdCounter < maxNodes, "Max nodes reached");
         
         if (publicMinting) {

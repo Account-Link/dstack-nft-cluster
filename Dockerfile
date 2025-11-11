@@ -21,15 +21,21 @@ RUN uv sync --frozen --no-dev
 # Copy application files
 COPY dstack_cluster.py .
 COPY signature_proof.py .
+COPY fastapi_server.py .
 
 # Environment variables with defaults
 ENV CONTRACT_ADDRESS=""
 ENV CONNECTION_URL="http://localhost:8080"
 ENV RPC_URL="http://host.docker.internal:8545"
 ENV DSTACK_SOCKET="/app/simulator/dstack.sock"
+ENV HOST="0.0.0.0"
+ENV PORT="8080"
 
 # Create directory for dstack socket if needed
 RUN mkdir -p /app/simulator
 
-# Default command runs the demo using uv
-CMD ["uv", "run", "python", "dstack_cluster.py"]
+# Expose the port
+EXPOSE 8080
+
+# Default command runs the FastAPI server using uv
+CMD ["uv", "run", "python", "fastapi_server.py"]
