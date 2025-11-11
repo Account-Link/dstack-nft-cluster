@@ -137,11 +137,50 @@ class DStackP2PSDK:
         
         self.instance_id = None
         self.registered = False
-        
+
     async def register(self) -> bool:
         """
-        Register this instance with the peer network.
-        Auto-detects everything from TEE environment.
+        Register the instance and peer with the peer network.
+        This function is called to register the instance and peer.
+        Returns: Success boolean
+        """
+        try:
+            await self.register_instance()
+            await self.register_peer()
+            return True
+        except Exception as e:
+            logger.error(f"Registration failed: {e}")
+            return False
+
+    # Helper function to send transaction
+    def send_transaction(self, contract_function, description):
+        # Get transaction account from private key
+        import os
+        private_key = os.environ["PRIVATE_KEY"]  # Required
+        
+        from eth_account import Account
+        account = Account.from_key(private_key)
+        tx_account = account.address
+        logger.info(f"Using private key account {tx_account} for transaction")
+
+        # Build and sign transaction with private key
+        tx = contract_function.build_transaction({
+            'from': tx_account,
+            'nonce': self.w3.eth.get_transaction_count(tx_account),
+            'gas': 2000000,
+            'gasPrice': self.w3.eth.gas_price,
+        })
+        signed_tx = account.sign_transaction(tx)
+        tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        
+        receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
+        logger.info(f"{description} transaction successful: {receipt.transactionHash.hex()}")
+        return receipt
+
+    async def register_instance(self) -> bool:
+        """
+        Register the instance with the peer network.
+        This function is called before the peer is registered.
         Returns: Success boolean
         """
         try:
@@ -152,7 +191,26 @@ class DStackP2PSDK:
             if not self.instance_id:
                 logger.error("Could not get instance ID from dstack")
                 return False
-                
+
+            logger.info(f"Registering instance {self.instance_id}")
+            self.send_transaction(
+                self.contract.functions.registerInstance(self.instance_id),
+                "registerInstance"
+            )
+        except Exception as e:
+            logger.warning(f"registerInstance failed (may already be registered): {e}")
+            return False
+        return True
+
+        
+    async def register_peer(self) -> bool:
+        """
+        Register with the peer network.
+        This function is called after the instance is registered.
+        Auto-detects everything from TEE environment.
+        Returns: Success boolean
+        """
+        try:
             logger.info(f"Registering instance {self.instance_id} with URL: {self.connection_url}")
             
             # Generate signature proof for peer registration
@@ -168,7 +226,7 @@ class DStackP2PSDK:
             # Get app public key from signature verification
             from eth_keys import keys
             from eth_utils import keccak
-            from eth_account import Account
+            
             derived_pubkey_sec1 = keys.PrivateKey(proof.derived_private_key).public_key.to_compressed_bytes()
             app_message = f"ethereum:{derived_pubkey_sec1.hex()}"
             app_message_hash = keccak(bytes(app_message, 'utf-8'))  # Use raw keccak256 like the contract
@@ -189,44 +247,9 @@ class DStackP2PSDK:
             logger.info(f"App ID: {app_id}")
             logger.info(f"App ID bytes32: {app_id_bytes32.hex()}")
             
-            # Get transaction account from private key
-            import os
-            private_key = os.environ["PRIVATE_KEY"]  # Required
-            
-            from eth_account import Account
-            account = Account.from_key(private_key)
-            tx_account = account.address
-            logger.info(f"Using private key account {tx_account} for transaction")
-            
-            # Helper function to send transaction
-            def send_transaction(contract_function, description):
-                # Build and sign transaction with private key
-                tx = contract_function.build_transaction({
-                    'from': tx_account,
-                    'nonce': self.w3.eth.get_transaction_count(tx_account),
-                    'gas': 2000000,
-                    'gasPrice': self.w3.eth.gas_price,
-                })
-                signed_tx = account.sign_transaction(tx)
-                tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-                
-                receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
-                logger.info(f"{description} transaction successful: {receipt.transactionHash.hex()}")
-                return receipt
-            
-            # First register the instance if not already registered
-            try:
-                logger.info(f"Registering instance {self.instance_id}")
-                send_transaction(
-                    self.contract.functions.registerInstance(self.instance_id),
-                    "registerInstance"
-                )
-            except Exception as e:
-                logger.warning(f"registerInstance failed (may already be registered): {e}")
-            
             # Call registerPeer function
             try:
-                send_transaction(
+                self.send_transaction(
                     self.contract.functions.registerPeer(
                         self.instance_id,
                         derived_pubkey_sec1,  # derived public key (SEC1 compressed)

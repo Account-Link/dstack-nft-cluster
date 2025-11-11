@@ -285,6 +285,7 @@ This project demonstrates key cryptographic and distributed systems concepts:
 #### Production (Base Mainnet) - Latest
 - **Contract Address**: `0x9d22D844690ff89ea5e8a6bb4Ca3F7DAc83a40c3` 
 - **New Contract Address as of 09/30/2025**: `0x33e081c002288F3301f48a5237D6b7e8703C39a3`
+- **New KMS Root Address as of 11/11/2025**: `0x52d3CF51c8A37A2CCfC79bBb98c7810d7Dd4CE51`
 - **KMS Root Address**: `0x8f2cF602C9695b23130367ed78d8F557554de7C5` ✅ (verified working)
 - **Verification**: [🔗 View on Basescan](https://basescan.org/address/0x33e081c002288F3301f48a5237D6b7e8703C39a3)
 - **Network**: Base Mainnet (Chain ID: 8453)
